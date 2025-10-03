@@ -1,0 +1,10 @@
+fastapi==0.116.1
+uvicorn==0.35.0
+psycopg2-binary==2.9.10
+pydantic-settings==2.10.1
+python-dotenv==1.1.1
+boto3==1.40.29
+folium==0.20.0
+geopandas==1.1.1
+pandas==2.3.2
+shapely==2.1.1
