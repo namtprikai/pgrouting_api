@@ -270,16 +270,17 @@ def find_route(payload, O, D, params):
         seg_train_StO_StD = route_train(stO["id"], stD["id"], params['wait_train']) if (stO and stD) else None
         seg_ship_PtO_PtD = route_ship_direct(ptO["id"], ptD["id"], params['ship_speed'], params['wait_ship']) if (ptO and ptD) else None
         seg_truck_PtD_D = route_truck_mm(ptD["plon"], ptD["plat"], D["lon"], D["lat"], params['toll_per_km']) if ptD else None
-        seg_truck_StD_PtO = route_truck_mm(stD["slon"], stD["slat"], ptO["plon"], ptO["plat"], params['toll_per_km'])
         
 
-        if stD and ptO and seg_truck_O_StO and seg_train_StO_StD and seg_ship_PtO_PtD and seg_truck_PtD_D and seg_truck_StD_PtO:
-            patterns.append({
-                "key": STREET_TYPE['TRUCK_TRAIN_SHIP'],
-                "label": "自動車 + 貨物列車 + 貨物船（列車→船）",
-                "segs": [S("truck", seg_truck_O_StO), S("train", seg_train_StO_StD), S("truck", seg_truck_StD_PtO),
-                        S("ship", seg_ship_PtO_PtD), S("truck", seg_truck_PtD_D)]
-            })
+        if stD and ptO and seg_truck_O_StO and seg_train_StO_StD and seg_ship_PtO_PtD and seg_truck_PtD_D:
+            seg_truck_StD_PtO = route_truck_mm(stD["slon"], stD["slat"], ptO["plon"], ptO["plat"], params['toll_per_km'])
+            if seg_truck_StD_PtO:
+                patterns.append({
+                    "key": STREET_TYPE['TRUCK_TRAIN_SHIP'],
+                    "label": "自動車 + 貨物列車 + 貨物船（列車→船）",
+                    "segs": [S("truck", seg_truck_O_StO), S("train", seg_train_StO_StD), S("truck", seg_truck_StD_PtO),
+                            S("ship", seg_ship_PtO_PtD), S("truck", seg_truck_PtD_D)]
+                })
 
     # 5) トラック + 船 + 列車（船→列車）
     if (payload and payload.street == STREET_TYPE['TRUCK_SHIP_TRAIN']):
@@ -287,15 +288,16 @@ def find_route(payload, O, D, params):
         seg_ship_PtO_PtD = route_ship_direct(ptO["id"], ptD["id"], params['ship_speed'], params['wait_ship']) if (ptO and ptD) else None
         seg_train_StO_StD = route_train(stO["id"], stD["id"], params['wait_train']) if (stO and stD) else None
         seg_truck_StD_D = route_truck_mm(stD["slon"], stD["slat"], D["lon"], D["lat"], params['toll_per_km']) if stD else None
-        seg_truck_PtD_StO = route_truck_mm(ptD["plon"], ptD["plat"], stO["slon"], stO["slat"], params['toll_per_km'])
 
-        if ptD and stO and seg_truck_O_PtO and seg_ship_PtO_PtD and seg_train_StO_StD and seg_truck_StD_D and seg_truck_PtD_StO:
-            patterns.append({
-                "key": STREET_TYPE['TRUCK_SHIP_TRAIN'],
-                "label": "自動車 + 貨物船 + 貨物列車（船→列車）",
-                "segs": [S("truck", seg_truck_O_PtO), S("ship", seg_ship_PtO_PtD), S("truck", seg_truck_PtD_StO),
-                        S("train", seg_train_StO_StD), S("truck", seg_truck_StD_D)]
-            })
+        if ptD and stO and seg_truck_O_PtO and seg_ship_PtO_PtD and seg_train_StO_StD and seg_truck_StD_D:
+            seg_truck_PtD_StO = route_truck_mm(ptD["plon"], ptD["plat"], stO["slon"], stO["slat"], params['toll_per_km'])
+            if seg_truck_PtD_StO:
+                patterns.append({
+                    "key": STREET_TYPE['TRUCK_SHIP_TRAIN'],
+                    "label": "自動車 + 貨物船 + 貨物列車（船→列車）",
+                    "segs": [S("truck", seg_truck_O_PtO), S("ship", seg_ship_PtO_PtD), S("truck", seg_truck_PtD_StO),
+                            S("train", seg_train_StO_StD), S("truck", seg_truck_StD_D)]
+                })
 
     # 6) トラック + 列車 + 船 + 列車（列車→船→列車）
     if (payload and payload.street == STREET_TYPE['TRUCK_TRAIN_SHIP_TRAIN']):
