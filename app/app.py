@@ -359,7 +359,7 @@ def find_route(payload, O, D, params):
 
         features.append(new_feature)
 
-        save_geojson([new_feature], path=f'output/{pat["key"]}.geojson')
+        save_geojson([new_feature], path=f'{pat["key"]}.geojson')
         return features
 
 # =========================
