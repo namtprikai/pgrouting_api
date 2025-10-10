@@ -1,13 +1,7 @@
 output/*
-TRUCK_ONLY.geojson
-TRUCK_SHIP.geojson
-TRUCK_SHIP_TRAIN.geojson
-TRUCK_TRAIN.geojson
-TRUCK_TRAIN_SHIP.geojson
-TRUCK_TRAIN_SHIP_TRAIN.geojson
-resource_chart.png
-resource_usage.csv
 __pycache__/
 .venv/
-Dockerfiles/importer/japan_highways.osm.bz2
+importer_data/japan_highways.osm.bz2
+importer_data/mapconfig.xml
 profile.out
+config/*

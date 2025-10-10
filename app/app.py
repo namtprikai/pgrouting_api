@@ -17,17 +17,11 @@ from constant import *
 # 環境変数
 # =========================
 class Settings(BaseSettings):
-    # PGHOST: str = os.getenv("PGHOST") if os.getenv("PGHOST") else "localhost"
-    # PGPORT: int = os.getenv("PGPORT") if os.getenv("PGPORT") else 5432
-    # PGDATABASE: str = os.getenv("PGDATABASE") if os.getenv("PGDATABASE") else "o2p"
-    # PGUSER: str = os.getenv("PGUSER") if os.getenv("PGUSER") else "o2p"
-    # PGPASSWORD: str = os.getenv("PGPASSWORD") if os.getenv("PGPASSWORD") else "o2p"
-
-    PGHOST: str = "localhost"
-    PGPORT: int = 5432
-    PGDATABASE: str = "o2p"
-    PGUSER: str = "o2p"
-    PGPASSWORD: str = "o2p"
+    PGHOST: str = os.getenv("PGHOST")
+    PGPORT: int = os.getenv("PGPORT")
+    PGDATABASE: str = os.getenv("PGDATABASE")
+    PGUSER: str = os.getenv("PGUSER")
+    PGPASSWORD: str = os.getenv("PGPASSWORD")
 
     PORT: int = 8080
 
@@ -214,6 +208,7 @@ def route_ship_direct(p_from: int, p_to: int, ship_speed_kph: float, wait_min: i
     }
 
 def find_route(payload, O, D, params):
+    print(payload.street, 'payload.street')
      # 6パターン構築
     # Seg オブジェクト： {"mode": "truck"|"train"|"ship", "geometry": GeoJSON, "distance_km": float, "time_h": float, "meta": 任意}
     def S(mode, seg):
@@ -228,7 +223,7 @@ def find_route(payload, O, D, params):
     ptD = nearest_port(D["lon"], D["lat"])
 
     # セグメント計算
-    # 1) トラックのみ
+    # 1) Only Truck
     if (payload and payload.street == STREET_TYPE['TRUCK_ONLY']):
         seg_truck_OD = route_truck_mm(O["lon"], O["lat"], D["lon"], D["lat"], params['toll_per_km'])
         if seg_truck_OD:
@@ -238,7 +233,7 @@ def find_route(payload, O, D, params):
                 "segs": [S("truck", seg_truck_OD)]
             })
 
-    # 2) トラック+列車
+    # 2) Truck + Train
     if (payload and payload.street == STREET_TYPE['TRUCK_TRAIN']):
         seg_truck_O_StO = route_truck_mm(O["lon"], O["lat"], stO["slon"], stO["slat"], params['toll_per_km']) if stO else None
         seg_train_StO_StD = route_train(stO["id"], stD["id"], params['wait_train']) if (stO and stD) else None
@@ -251,8 +246,9 @@ def find_route(payload, O, D, params):
                 "segs": [S("truck", seg_truck_O_StO), S("train", seg_train_StO_StD), S("truck", seg_truck_StD_D)]
             })
     
-    # 3) トラック+船
+    # 3) Truck + Ship
     if (payload and payload.street == STREET_TYPE['TRUCK_SHIP']):
+        print(O["lon"], O["lat"], ptO["plon"], ptO["plat"], ptO["id"], ptD["id"], ptD["plon"], ptD["plat"], D["lon"], D["lat"], '.......')
         seg_truck_O_PtO = route_truck_mm(O["lon"], O["lat"], ptO["plon"], ptO["plat"], params['toll_per_km']) if ptO else None
         seg_ship_PtO_PtD = route_ship_direct(ptO["id"], ptD["id"], params['ship_speed'], params['wait_ship']) if (ptO and ptD) else None
         seg_truck_PtD_D = route_truck_mm(ptD["plon"], ptD["plat"], D["lon"], D["lat"], params['toll_per_km']) if ptD else None
@@ -264,7 +260,7 @@ def find_route(payload, O, D, params):
                 "segs": [S("truck", seg_truck_O_PtO), S("ship", seg_ship_PtO_PtD), S("truck", seg_truck_PtD_D)]
             })
 
-    # 4) トラック + 列車 + 船（列車→船）
+    # 4) Truck + Train + Ship
     if (payload and payload.street == STREET_TYPE['TRUCK_TRAIN_SHIP']):
         seg_truck_O_StO = route_truck_mm(O["lon"], O["lat"], stO["slon"], stO["slat"], params['toll_per_km']) if stO else None
         seg_train_StO_StD = route_train(stO["id"], stD["id"], params['wait_train']) if (stO and stD) else None
@@ -282,7 +278,7 @@ def find_route(payload, O, D, params):
                             S("ship", seg_ship_PtO_PtD), S("truck", seg_truck_PtD_D)]
                 })
 
-    # 5) トラック + 船 + 列車（船→列車）
+    # 5) Truck + Ship + Train
     if (payload and payload.street == STREET_TYPE['TRUCK_SHIP_TRAIN']):
         seg_truck_O_PtO = route_truck_mm(O["lon"], O["lat"], ptO["plon"], ptO["plat"], params['toll_per_km']) if ptO else None
         seg_ship_PtO_PtD = route_ship_direct(ptO["id"], ptD["id"], params['ship_speed'], params['wait_ship']) if (ptO and ptD) else None
@@ -299,7 +295,7 @@ def find_route(payload, O, D, params):
                             S("train", seg_train_StO_StD), S("truck", seg_truck_StD_D)]
                 })
 
-    # 6) トラック + 列車 + 船 + 列車（列車→船→列車）
+    # 6) Truck + Train + Ship + Train
     if (payload and payload.street == STREET_TYPE['TRUCK_TRAIN_SHIP_TRAIN']):
         if stO and stD and ptO and ptD:
             seg_truck_O_StO2 = seg_truck_O_StO or route_truck_mm(O["lon"], O["lat"], stO["slon"], stO["slat"], params['toll_per_km'])
@@ -319,11 +315,10 @@ def find_route(payload, O, D, params):
                             S("truck", seg_truck_StD_D2)]
                 })
 
-    # パターンが一つも組めない場合
+    # Rase message can't search route
     if not patterns:
         raise HTTPException(status_code=404, detail="No feasible pattern could be constructed (check station/port coverage).")
 
-    # 各パターンの合計値と CO2
     features: List[Dict[str, Any]] = []
 
     for pat in patterns:
@@ -364,11 +359,11 @@ def find_route(payload, O, D, params):
 
         features.append(new_feature)
 
-        save_geojson([new_feature], path=f'{pat["key"]}.geojson')
+        save_geojson([new_feature], path=f'output/{pat["key"]}.geojson')
         return features
 
 # =========================
-# CO2ヘルパ
+# Calc CO2
 # =========================
 def co2_g(total_km: float, ef_g_per_tkm: float, ton: float) -> float:
     return total_km * ef_g_per_tkm * ton
@@ -377,34 +372,6 @@ def save_geojson(features: List[Dict[str, Any]], path: str) -> None:
     fc = {"type": "FeatureCollection", "features": features}
     with open(path, "w", encoding="utf-8") as f:
         json.dump(fc, f, ensure_ascii=False, indent=2)
-
-def make_map(features: List[Dict[str, Any]], path: str) -> None:
-    # 中心は最初のFeatureの始点に
-    if not features:
-        return
-    first = features[0]
-    coords = first["geometry"]["geometries"][0]["coordinates"]
-    center = coords[0][1], coords[0][0]  # (lat, lon)
-    m = folium.Map(location=center, zoom_start=12, tiles="cartodbpositron")
-
-    palette = ["#1f77b4", "#2ca02c", "#d62728", "#9467bd", "#8c564b"]
-    for i, feat in enumerate(features):
-        coords = feat["geometry"]["geometries"][0]["coordinates"]
-        latlons = [(lat, lon) for lon, lat in coords]
-        travel_mode = feat['properties']['segments'][0]['mode']
-        total_distance_km = feat['properties']['segments'][0]['distance_km']
-        total_duration_h = feat['properties']['segments'][0]['time_h']
-        folium.PolyLine(latlons, weight=5, opacity=0.9, color=palette[i % len(palette)],
-                        tooltip=f"{travel_mode}: "
-                                f"{total_distance_km}km / "
-                                f"{total_duration_h}h").add_to(m)
-        # start/end marker
-        folium.Marker(latlons[0], tooltip="Start").add_to(m)
-        folium.Marker(latlons[-1], tooltip="End",
-                      icon=folium.Icon(color="red", icon="flag")).add_to(m)
-
-    folium.LayerControl(collapsed=False).add_to(m)
-    m.save(path)
 
 # =========================
 # FastAPI
@@ -428,7 +395,7 @@ def multimodal_route(payload: MultimodalBody):
     ef_train = float(payload.ef_train_g_per_tkm if payload.ef_train_g_per_tkm is not None else settings.EF_TRAIN_G_PER_TKM)
     ef_ship  = float(payload.ef_ship_g_per_tkm  if payload.ef_ship_g_per_tkm  is not None else settings.EF_SHIP_G_PER_TKM)
 
-    street = payload.street if payload.street is not None else "TRUCK_ONLY"
+    street = payload.street if payload.street is not None else STREET_TYPE["TRUCK_ONLY"]
 
     params = {
         "wait_train": wait_train,

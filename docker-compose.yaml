@@ -1,4 +1,18 @@
 services:
+  db:
+    image: pgrouting/pgrouting:latest
+    container_name: database_pg
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: pgrouting
+      POSTGRES_DB: pgrouting
+    volumes:
+      - db_data:/var/lib/postgresql/data
+      - ./db_init:/scripts
+    ports:
+      - 5434:5432
+    restart: unless-stopped
+
   pgrouting_api:
     build: 
       context: .
@@ -9,33 +23,21 @@ services:
     environment:
       PGHOST: db
       PGPORT: 5432
-      PGUSER: pgrouting
+      PGUSER: postgres
       PGPASSWORD: pgrouting
       PGDATABASE: pgrouting
+    volumes:
+      - ./app:/app
     depends_on:
       - db
   
-  # importer:
-  #   build:
-  #     context: .
-  #     dockerfile: Dockerfiles/importer/Dockerfile
-  #   depends_on:
-  #     - db
-  #   volumes:
-  #     - ./data:/data
-  
-  db:
-    image: pgrouting/pgrouting:latest
-    container_name: postgis_db
-    environment:
-      POSTGRES_USER: pgrouting
-      POSTGRES_PASSWORD: pgrouting
-      POSTGRES_DB: pgrouting
+  importer:
+    build:
+      context: .
+      dockerfile: Dockerfiles/importer/Dockerfile
+    depends_on:
+      - db
     volumes:
-      - db_data:/var/lib/postgresql/data
-      - ./postgres-config/pg_hba.conf:/etc/postgresql/pg_hba.conf
-    ports:
-      - "5433:5432"
-    restart: unless-stopped
+      - ./data:/data
 volumes:
   db_data:
