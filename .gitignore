@@ -3,5 +3,7 @@ __pycache__/
 .venv/
 importer_data/japan_highways.osm.bz2
 importer_data/mapconfig.xml
+importer_data/貨物船_位置情報（国土数値情報）.csv
+importer_data/貨物駅_位置情報.xlsx
 profile.out
 config/*

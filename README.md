@@ -1,3 +1,4 @@
+
 # Links-Veda Find Routing
 
 ## Description:
@@ -15,11 +16,22 @@ API for calculating the optimal route in Japan
 **Tools:** osm2pgsql, osmctools, osmium-tool, osm2pgrouting
 
 ## Init data:
-1. Copy file **japan_highways.osm.bz2** to folder **importer_data**
+1. Download and move file **japan_highways.osm.bz2** to folder **importer_data**
 
-2. Copy file **mapconfig.xml** to folder **importer_data**
+2. Download and move file **mapconfig.xml** to folder **importer_data**
 
 ## Installation
+
+### Make venv and install requirements
+```bash
+python -m venv .venv
+```
+
+```bash
+pip install -r requirements.txt
+```
+
+### Build docker container
 1. Build docker container
 
 ```bash
@@ -37,3 +49,27 @@ osm2pgrouting -f /japan_highways.osm.bz2 -c /mapconfig.xml -d pgrouting -U postg
 ```bash
 docker exec -it database_pg bash -c "/scripts/init_db.sh"
 ```
+
+## Import data for freigh_stations table:
+
+1. Download and move **貨物駅_位置情報.xlsx** file to **importer_data** folder
+
+2. Run file import_freight_stations.py in the **app** folder
+
+```bash
+python app/import_freight_stations.py
+```
+
+3. Check data in the table **freight_stations**
+
+## Import data for ports table:
+
+1. Download and move file **貨物船_位置情報（国土数値情報）.csv** to folder **importer_data**
+
+2. Run file **import_ports.py** in the **app** folder
+
+```bash
+python app/import_ports.py
+```
+
+3. Check data in the table **ports**
