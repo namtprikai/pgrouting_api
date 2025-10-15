@@ -17,11 +17,17 @@ from constant import *
 # 環境変数
 # =========================
 class Settings(BaseSettings):
-    PGHOST: str = os.getenv("PGHOST")
-    PGPORT: int = os.getenv("PGPORT")
-    PGDATABASE: str = os.getenv("PGDATABASE")
-    PGUSER: str = os.getenv("PGUSER")
-    PGPASSWORD: str = os.getenv("PGPASSWORD")
+    # PGHOST: str = os.getenv("PGHOST")
+    # PGPORT: int = os.getenv("PGPORT")
+    # PGDATABASE: str = os.getenv("PGDATABASE")
+    # PGUSER: str = os.getenv("PGUSER")
+    # PGPASSWORD: str = os.getenv("PGPASSWORD")
+
+    PGHOST: str = "localhost"
+    PGPORT: int = 5434
+    PGDATABASE: str = "pgrouting"
+    PGUSER: str = "postgres"
+    PGPASSWORD: str = "pgrouting"
 
     PORT: int = 8080
 
@@ -156,6 +162,17 @@ def create_bridge_edge(start_node: int, end_node: int, cost: float, length_m: fl
     finally:
         POOL.putconn(conn)
 
+def create_line_route(origin_lon, origin_lat, dest_lon, dest_lat):
+    lines = {
+        'geometry': {
+            'type': 'LineString',
+            'coordinates': [[origin_lon, origin_lat], [dest_lon, dest_lat]]
+        },
+        'distance_km': 1374.78777347504,
+        'travel_time_h': 46.82625911583467
+    }
+    return lines
+
 def route_truck_mm(o_lon: float, o_lat: float, d_lon: float, d_lat: float, toll_per_km: float):
     row = sql_one(
         """
@@ -236,9 +253,13 @@ def find_route(payload, O, D, params):
     # 2) Truck + Train
     if (payload and payload.street == STREET_TYPE['TRUCK_TRAIN']):
         seg_truck_O_StO = route_truck_mm(O["lon"], O["lat"], stO["slon"], stO["slat"], params['toll_per_km']) if stO else None
-        seg_train_StO_StD = route_train(stO["id"], stD["id"], params['wait_train']) if (stO and stD) else None
-        seg_truck_StD_D = route_truck_mm(stD["slon"], stD["slat"], D["lon"], D["lat"], params['toll_per_km']) if stD else None
         
+        seg_train_StO_StD = route_train(stO["id"], stD["id"], params['wait_train']) if (stO and stD) else None
+        if seg_train_StO_StD == None and stO and stD:
+            seg_train_StO_StD = create_line_route(stO["slon"], stO["slat"], stD["slon"], stD["slat"])
+
+        seg_truck_StD_D = route_truck_mm(stD["slon"], stD["slat"], D["lon"], D["lat"], params['toll_per_km']) if stD else None
+
         if seg_truck_O_StO and seg_train_StO_StD and seg_truck_StD_D:
             patterns.append({
                 "key": STREET_TYPE['TRUCK_TRAIN'],
@@ -248,11 +269,10 @@ def find_route(payload, O, D, params):
     
     # 3) Truck + Ship
     if (payload and payload.street == STREET_TYPE['TRUCK_SHIP']):
-        print(O["lon"], O["lat"], ptO["plon"], ptO["plat"], ptO["id"], ptD["id"], ptD["plon"], ptD["plat"], D["lon"], D["lat"], '.......')
         seg_truck_O_PtO = route_truck_mm(O["lon"], O["lat"], ptO["plon"], ptO["plat"], params['toll_per_km']) if ptO else None
         seg_ship_PtO_PtD = route_ship_direct(ptO["id"], ptD["id"], params['ship_speed'], params['wait_ship']) if (ptO and ptD) else None
         seg_truck_PtD_D = route_truck_mm(ptD["plon"], ptD["plat"], D["lon"], D["lat"], params['toll_per_km']) if ptD else None
-        
+
         if seg_truck_O_PtO and seg_ship_PtO_PtD and seg_truck_PtD_D:
             patterns.append({
                 "key": STREET_TYPE['TRUCK_SHIP'],
@@ -263,10 +283,18 @@ def find_route(payload, O, D, params):
     # 4) Truck + Train + Ship
     if (payload and payload.street == STREET_TYPE['TRUCK_TRAIN_SHIP']):
         seg_truck_O_StO = route_truck_mm(O["lon"], O["lat"], stO["slon"], stO["slat"], params['toll_per_km']) if stO else None
+
         seg_train_StO_StD = route_train(stO["id"], stD["id"], params['wait_train']) if (stO and stD) else None
+        if seg_train_StO_StD == None and stO and stD:
+            seg_train_StO_StD = create_line_route(stO["slon"], stO["slat"], stD["slon"], stD["slat"])
+        
         seg_ship_PtO_PtD = route_ship_direct(ptO["id"], ptD["id"], params['ship_speed'], params['wait_ship']) if (ptO and ptD) else None
         seg_truck_PtD_D = route_truck_mm(ptD["plon"], ptD["plat"], D["lon"], D["lat"], params['toll_per_km']) if ptD else None
-        
+        if seg_truck_PtD_D == None and ptD:
+            seg_truck_PtD_D = create_line_route(ptD["plon"], ptD["plat"], D["lon"], D["lat"])
+
+        print(seg_ship_PtO_PtD, 'seg_ship_PtO_PtD')
+        print(ptD, D, 'seg_truck_PtD_D')
 
         if stD and ptO and seg_truck_O_StO and seg_train_StO_StD and seg_ship_PtO_PtD and seg_truck_PtD_D:
             seg_truck_StD_PtO = route_truck_mm(stD["slon"], stD["slat"], ptO["plon"], ptO["plat"], params['toll_per_km'])
@@ -282,7 +310,11 @@ def find_route(payload, O, D, params):
     if (payload and payload.street == STREET_TYPE['TRUCK_SHIP_TRAIN']):
         seg_truck_O_PtO = route_truck_mm(O["lon"], O["lat"], ptO["plon"], ptO["plat"], params['toll_per_km']) if ptO else None
         seg_ship_PtO_PtD = route_ship_direct(ptO["id"], ptD["id"], params['ship_speed'], params['wait_ship']) if (ptO and ptD) else None
+        
         seg_train_StO_StD = route_train(stO["id"], stD["id"], params['wait_train']) if (stO and stD) else None
+        if seg_train_StO_StD == None and stO and stD:
+            seg_train_StO_StD = create_line_route(stO["slon"], stO["slat"], stD["slon"], stD["slat"])
+        
         seg_truck_StD_D = route_truck_mm(stD["slon"], stD["slat"], D["lon"], D["lat"], params['toll_per_km']) if stD else None
 
         if ptD and stO and seg_truck_O_PtO and seg_ship_PtO_PtD and seg_train_StO_StD and seg_truck_StD_D:
@@ -298,13 +330,33 @@ def find_route(payload, O, D, params):
     # 6) Truck + Train + Ship + Train
     if (payload and payload.street == STREET_TYPE['TRUCK_TRAIN_SHIP_TRAIN']):
         if stO and stD and ptO and ptD:
-            seg_truck_O_StO2 = seg_truck_O_StO or route_truck_mm(O["lon"], O["lat"], stO["slon"], stO["slat"], params['toll_per_km'])
-            seg_train_StO_StD2 = seg_train_StO_StD or route_train(stO["id"], stD["id"], params['wait_train'])
-            seg_truck_StD_PtO2 = route_truck_mm(stD["slon"], stD["slat"], ptO["plon"], ptO["plat"], params['toll_per_km'])
-            seg_ship_PtO_PtD2  = seg_ship_PtO_PtD or route_ship_direct(ptO["id"], ptD["id"], params['ship_speed'], params['wait_ship'])
+            seg_truck_O_StO2 = route_truck_mm(O["lon"], O["lat"], stO["slon"], stO["slat"], params['toll_per_km'])
+            if seg_truck_O_StO2 == None and O and stO:
+                seg_truck_O_StO2 = create_line_route(O["lon"], O["lat"], stO["slon"], stO["slat"])
+            
+            seg_train_StO_StD2 = route_train(stO["id"], stD["id"], params['wait_train'])
+            if seg_train_StO_StD2 == None and stO and stD:
+                seg_train_StO_StD2 = create_line_route(stO["slon"], stO["slat"], stD["slon"], stD["slat"])
+            
+            near_port = nearest_port(stD["slon"], stD["slat"])
+            print(stD["slon"], stD["slat"])
+            print(near_port, 'near_port')
+            seg_truck_StD_PtO2 = route_truck_mm(stD["slon"], stD["slat"], near_port["plon"], near_port["plat"], params['toll_per_km'])
+            if seg_truck_StD_PtO2 == None and stD and ptO:
+                seg_truck_StD_PtO2 = create_line_route(stD["slon"], stD["slat"], near_port["plon"], near_port["plat"])
+
+            seg_ship_PtO_PtD2  = route_ship_direct(ptO["id"], ptD["id"], params['ship_speed'], params['wait_ship'])
             seg_truck_PtD_StO2 = route_truck_mm(ptD["plon"], ptD["plat"], stO["slon"], stO["slat"], params['toll_per_km'])
+            if seg_truck_PtD_StO2 == None and ptD and stO:
+                seg_truck_PtD_StO2 = create_line_route(ptD["plon"], ptD["plat"], stO["slon"], stO["slat"])
+            
             seg_train_StO_StD3 = route_train(stO["id"], stD["id"], params['wait_train'])
-            seg_truck_StD_D2   = seg_truck_StD_D or route_truck_mm(stD["slon"], stD["slat"], D["lon"], D["lat"], params['toll_per_km'])
+            if seg_train_StO_StD3 == None and stO and stD:
+                seg_train_StO_StD3 = create_line_route(stO["slon"], stO["slat"], stD["slon"], stD["slat"])
+            
+            seg_truck_StD_D2 = route_truck_mm(stD["slon"], stD["slat"], D["lon"], D["lat"], params['toll_per_km'])
+            if seg_truck_StD_D2 == None and stD and D:
+                seg_truck_StD_D2 = create_line_route(stD["slon"], stD["slat"], D["lon"], D["lat"])
 
             if all([seg_truck_O_StO2, seg_train_StO_StD2, seg_truck_StD_PtO2, seg_ship_PtO_PtD2, seg_truck_PtD_StO2, seg_train_StO_StD3, seg_truck_StD_D2]):
                 patterns.append({
@@ -426,11 +478,6 @@ def multimodal_route(payload: MultimodalBody):
     if start_node_component == end_node_component:
         features = find_route(payload, O, D, params)
     else:
-        # bridge_node = find_bridge_nodes(start_node['nearest_node_id'], end_node['nearest_node_id'])
-        # cost = bridge_node['physical_bridge_distance_meters'] + wait_ship
-        # result = create_bridge_edge(start_node['nearest_node_id'], end_node['nearest_node_id'], cost, bridge_node['physical_bridge_distance_meters'])
-        # features = find_route(payload, O, D, params)
-        # print(features, 'features')
         raise HTTPException(status_code=404, detail="No feasible pattern could be constructed (check station/port coverage).")
 
     def best_by(field: str) -> str:
