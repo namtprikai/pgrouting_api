@@ -8,7 +8,7 @@ import pandas as pd
 from shapely.geometry import Point, LineString
 from datetime import timedelta
 import pyproj
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 import json
 try:
     import psycopg2
@@ -456,10 +456,10 @@ class RouteOptimizer:
                 
                 # Combine geometries: truck1 + ship + truck2
                 # Use actual truck geometries from database
-                if truck_geom_1 and truck_geom_2 and hasattr(truck_geom_1, 'coords') and hasattr(truck_geom_2, 'coords'):
+                if truck_geom_1 and truck_geom_2:
                     # Use actual truck geometries from database
-                    truck1_coords = list(truck_geom_1.coords)
-                    truck2_coords = list(truck_geom_2.coords)
+                    truck1_coords = self._get_geometry_coords(truck_geom_1)
+                    truck2_coords = self._get_geometry_coords(truck_geom_2)
                     
                     
                     # Combine: truck1 + ship + truck2
@@ -597,10 +597,10 @@ class RouteOptimizer:
                 
                 # Combine geometries: truck1 + train + truck2
                 # Use actual truck geometries from database
-                if truck_geom_1 and truck_geom_2 and hasattr(truck_geom_1, 'coords') and hasattr(truck_geom_2, 'coords'):
+                if truck_geom_1 and truck_geom_2:
                     # Use actual truck geometries from database
-                    truck1_coords = list(truck_geom_1.coords)
-                    truck2_coords = list(truck_geom_2.coords)
+                    truck1_coords = self._get_geometry_coords(truck_geom_1)
+                    truck2_coords = self._get_geometry_coords(truck_geom_2)
                     
                     
                     # Combine: truck1 + train + truck2
@@ -873,10 +873,10 @@ class RouteOptimizer:
             truck_geom_1 = origin_to_station.get('geometry')
             truck_geom_2 = station_to_dest.get('geometry')
             
-            if truck_geom_1 and truck_geom_2 and hasattr(truck_geom_1, 'coords') and hasattr(truck_geom_2, 'coords'):
+            if truck_geom_1 and truck_geom_2:
                 # Use truck geometries from database
-                truck1_coords = list(truck_geom_1.coords)
-                truck2_coords = list(truck_geom_2.coords)
+                truck1_coords = self._get_geometry_coords(truck_geom_1)
+                truck2_coords = self._get_geometry_coords(truck_geom_2)
                 
                 # Create train segment
                 if transfer_stations:
@@ -1141,10 +1141,10 @@ class RouteOptimizer:
             truck_geom_1 = origin_to_port.get('geometry')
             truck_geom_2 = port_to_dest.get('geometry')
             
-            if truck_geom_1 and truck_geom_2 and hasattr(truck_geom_1, 'coords') and hasattr(truck_geom_2, 'coords'):
+            if truck_geom_1 and truck_geom_2:
                 # Use truck geometries from database
-                truck1_coords = list(truck_geom_1.coords)
-                truck2_coords = list(truck_geom_2.coords)
+                truck1_coords = self._get_geometry_coords(truck_geom_1)
+                truck2_coords = self._get_geometry_coords(truck_geom_2)
                 
                 # Create ship segment
                 if transfer_ports:
@@ -1201,6 +1201,44 @@ class RouteOptimizer:
                 (0, 0), (0, 0), (0, 0), (0, 0)
             ])
     
+    def _get_geometry_coords(self, geometry) -> List[Tuple[float, float]]:
+        """Get coordinates from geometry (handles both Shapely and GeoJSON)"""
+        if isinstance(geometry, dict):
+            # GeoJSON geometry
+            if geometry.get('type') == 'LineString':
+                return geometry.get('coordinates', [])
+            elif geometry.get('type') == 'MultiLineString':
+                # Flatten all LineString coordinates
+                all_coords = []
+                for line in geometry.get('coordinates', []):
+                    all_coords.extend(line)
+                return all_coords
+        elif isinstance(geometry, str):
+            # WKT string - try to parse
+            try:
+                from shapely import wkt
+                geom = wkt.loads(geometry)
+                if hasattr(geom, 'coords'):
+                    return list(geom.coords)
+                elif hasattr(geom, 'geoms'):
+                    all_coords = []
+                    for g in geom.geoms:
+                        all_coords.extend(list(g.coords))
+                    return all_coords
+            except:
+                pass
+        else:
+            # Shapely geometry
+            if hasattr(geometry, 'coords'):
+                return list(geometry.coords)
+            elif hasattr(geometry, 'geoms'):
+                # MultiLineString
+                all_coords = []
+                for geom in geometry.geoms:
+                    all_coords.extend(list(geom.coords))
+                return all_coords
+        return []
+    
     def _get_truck_route_info(self, start_point: Point, end_point: Point) -> Optional[Dict]:
         """Get truck route info from database or fallback"""
         # Try database first
@@ -1208,7 +1246,8 @@ class RouteOptimizer:
             print(f"Debug: Trying database for truck route from ({start_point.x}, {start_point.y}) to ({end_point.x}, {end_point.y})")
             db_result = self._get_truck_route_info_db(start_point, end_point)
             if db_result:
-                print(f"Debug: Database returned route with {len(db_result.get('geometry', LineString()).coords)} points")
+                coords = self._get_geometry_coords(db_result.get('geometry', {}))
+                print(f"Debug: Database returned route with {len(coords)} points")
                 return db_result
             else:
                 print("Debug: Database returned None, using fallback")
@@ -1374,39 +1413,79 @@ class RouteOptimizer:
                     # Handle different geometry types
                     if isinstance(geometry, str):
                         # If it's a WKT string, parse it
-                        geometry = wkt.loads(geometry)
+                        try:
+                            geometry = wkt.loads(geometry)
+                        except:
+                            # If WKT parsing fails, try to parse as JSON
+                            try:
+                                geometry = json.loads(geometry)
+                            except:
+                                print(f"Warning: Could not parse geometry string: {geometry[:100]}...")
+                                continue
                     elif isinstance(geometry, LineString):
                         # If it's already a LineString object, use it directly
                         pass
+                    elif isinstance(geometry, dict):
+                        # Already GeoJSON, use as is
+                        pass
                     else:
                         # Try to convert other geometry types
-                        geometry = wkt.loads(str(geometry))
+                        try:
+                            geometry = wkt.loads(str(geometry))
+                        except:
+                            print(f"Warning: Could not convert geometry: {type(geometry)}")
+                            continue
                     
                     # Create feature
-                    feature = {
-                        "type": "Feature",
-                        "geometry": {
-                            "type": geometry.geom_type,
-                            "coordinates": list(geometry.coords)
-                        },
-                        "properties": convert_numpy_types({
-                            "mode": route.get('mode', ''),
-                            "total_time_minutes": route.get('total_time_minutes', 0),
-                            "total_distance_meters": route.get('total_distance_meters', 0),
-                            "total_distance_km": route.get('total_distance_km', 0),
-                            "co2_emissions_grams": route.get('co2_emissions_grams', 0),
-                            "origin_port": route.get('origin_port', ''),
-                            "dest_port": route.get('dest_port', ''),
-                            "origin_station": route.get('origin_station', ''),
-                            "dest_station": route.get('dest_station', ''),
-                            "transfer_port": route.get('transfer_port', ''),
-                            "transfer_station": route.get('transfer_station', ''),
-                            "ship_time_hours": route.get('ship_time_hours', 0),
-                            "train_time_minutes": route.get('train_time_minutes', 0),
-                            "truck_time_minutes": route.get('truck_time_minutes', 0),
-                            "truck_distance_km": route.get('truck_distance_km', 0)
-                        })
-                    }
+                    if isinstance(geometry, dict):
+                        # Already GeoJSON
+                        feature = {
+                            "type": "Feature",
+                            "geometry": geometry,
+                            "properties": convert_numpy_types({
+                                "mode": route.get('mode', ''),
+                                "total_time_minutes": route.get('total_time_minutes', 0),
+                                "total_distance_meters": route.get('total_distance_meters', 0),
+                                "total_distance_km": route.get('total_distance_km', 0),
+                                "co2_emissions_grams": route.get('co2_emissions_grams', 0),
+                                "origin_port": route.get('origin_port', ''),
+                                "dest_port": route.get('dest_port', ''),
+                                "origin_station": route.get('origin_station', ''),
+                                "dest_station": route.get('dest_station', ''),
+                                "transfer_port": route.get('transfer_port', ''),
+                                "transfer_station": route.get('transfer_station', ''),
+                                "ship_time_hours": route.get('ship_time_hours', 0),
+                                "train_time_minutes": route.get('train_time_minutes', 0),
+                                "truck_time_minutes": route.get('truck_time_minutes', 0),
+                                "truck_distance_km": route.get('truck_distance_km', 0)
+                            })
+                        }
+                    else:
+                        # Shapely geometry
+                        feature = {
+                            "type": "Feature",
+                            "geometry": {
+                                "type": geometry.geom_type,
+                                "coordinates": list(geometry.coords)
+                            },
+                            "properties": convert_numpy_types({
+                                "mode": route.get('mode', ''),
+                                "total_time_minutes": route.get('total_time_minutes', 0),
+                                "total_distance_meters": route.get('total_distance_meters', 0),
+                                "total_distance_km": route.get('total_distance_km', 0),
+                                "co2_emissions_grams": route.get('co2_emissions_grams', 0),
+                                "origin_port": route.get('origin_port', ''),
+                                "dest_port": route.get('dest_port', ''),
+                                "origin_station": route.get('origin_station', ''),
+                                "dest_station": route.get('dest_station', ''),
+                                "transfer_port": route.get('transfer_port', ''),
+                                "transfer_station": route.get('transfer_station', ''),
+                                "ship_time_hours": route.get('ship_time_hours', 0),
+                                "train_time_minutes": route.get('train_time_minutes', 0),
+                                "truck_time_minutes": route.get('truck_time_minutes', 0),
+                                "truck_distance_km": route.get('truck_distance_km', 0)
+                            })
+                        }
                     
                     geojson["features"].append(feature)
                     
@@ -1946,24 +2025,14 @@ class RouteOptimizer:
             
             print(f"Debug: Got route from database - distance: {route_result['distance_km']} km, time: {route_result['travel_time_h']} h")
             
-            # Convert GeoJSON to Shapely geometry
-            from shapely.geometry import shape
-            geometry = shape(route_result['geometry'])
-            
-            # Handle MultiLineString by selecting the longest segment (truck route)
-            if hasattr(geometry, 'geoms'):  # MultiLineString
-                # Find the segment with the most points (likely the actual truck route)
-                longest_segment = max(geometry.geoms, key=lambda geom: len(geom.coords))
-                geometry = longest_segment
-                print(f"Debug: MultiLineString found, selected longest segment with {len(geometry.coords)} points")
-            
-            print(f"Debug: Converted geometry has {len(geometry.coords)} points")
+            # Use geometry directly from database like app.py - no conversion
+            geometry = route_result['geometry']
             
             # Return in the format expected by route_optimizer
             return {
                 'time': route_result['travel_time_h'] * 60,  # Convert to minutes
                 'distance': route_result['distance_km'] * 1000,  # Convert to meters
-                'geometry': geometry  # Use actual geometry from database as Shapely object
+                'geometry': geometry  # Use Shapely geometry object
             }
             
         except Exception as e:
