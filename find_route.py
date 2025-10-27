@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """
-Script cải tiến để tìm tuyến đường tối ưu với khả năng tìm trung chuyển
 Enhanced script to find optimal routes with transfer capability
 """
 
@@ -11,72 +10,72 @@ from route_optimizer import RouteOptimizer
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Tìm tuyến đường tối ưu giữa hai điểm',
+        description='Find optimal route between two points',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
-Ví dụ sử dụng:
-  # Mặc định: Tuyến đường nhanh nhất (tự động tìm trung chuyển nếu cần)
+Usage examples:
+  # Default: Fastest route (automatically finds transfers if needed)
   python find_route.py 35.6762 139.6503 34.6937 135.5023
   
-  # Tuyến đường ngắn nhất
+  # Shortest route
   python find_route.py 35.6762 139.6503 34.6937 135.5023 --criteria shortest
   
-  # Tuyến đường ít CO2 nhất
+  # Greenest route (lowest CO2)
   python find_route.py 35.6762 139.6503 34.6937 135.5023 --criteria greenest
   
-  # Hiển thị tất cả tuyến đường
+  # Show all routes
   python find_route.py 35.6762 139.6503 34.6937 135.5023 --show-all
   
-  # Tùy chỉnh số trung chuyển tối đa
+  # Customize maximum transfers
   python find_route.py 35.6762 139.6503 34.6937 135.5023 --max-transfers 5
   
-  # Lưu kết quả
+  # Save results
   python find_route.py 35.6762 139.6503 34.6937 135.5023 --output results
         """
     )
-    
-    parser.add_argument('origin_lat', type=float, help='Vĩ độ điểm xuất phát')
-    parser.add_argument('origin_lon', type=float, help='Kinh độ điểm xuất phát')
-    parser.add_argument('dest_lat', type=float, help='Vĩ độ điểm đến')
-    parser.add_argument('dest_lon', type=float, help='Kinh độ điểm đến')
-    parser.add_argument('--weight', type=float, default=10.0, help='Trọng lượng hàng hóa (tấn)')
+
+    parser.add_argument('origin_lat', type=float, help='Origin latitude')
+    parser.add_argument('origin_lon', type=float, help='Origin longitude')
+    parser.add_argument('dest_lat', type=float, help='Destination latitude')
+    parser.add_argument('dest_lon', type=float, help='Destination longitude')
+    parser.add_argument('--weight', type=float, default=10.0, help='Cargo weight (tons)')
     parser.add_argument('--data-folder', 
                        default='sample/content/drive/MyDrive/modalshift',
-                       help='Đường dẫn đến thư mục dữ liệu')
-    parser.add_argument('--output', help='File để lưu kết quả (GeoJSON)')
+                       help='Path to data folder')
+    parser.add_argument('--output', help='File to save results (GeoJSON)')
     parser.add_argument('--criteria', 
                        choices=['fastest', 'shortest', 'greenest'],
                        default='fastest',
-                       help='Tiêu chí tối ưu (fastest: nhanh nhất, shortest: ngắn nhất, greenest: ít CO2 nhất)')
+                       help='Optimization criteria (fastest: fastest, shortest: shortest, greenest: lowest CO2)')
     parser.add_argument('--show-all', action='store_true',
-                       help='Hiển thị tất cả tuyến đường thay vì chỉ tuyến tối ưu')
-    parser.add_argument('--verbose', '-v', action='store_true', help='Hiển thị thông tin chi tiết')
+                       help='Show all routes instead of just optimal')
+    parser.add_argument('--verbose', '-v', action='store_true', help='Show detailed information')
     parser.add_argument('--mode', 
                        choices=['all', 'truck_only', 'truck_ship', 'truck_train'],
                        default='all',
-                       help='Loại đường đi (all: tất cả, truck_only: chỉ xe tải, truck_ship: xe tải+tàu biển, truck_train: xe tải+tàu hỏa)')
+                       help='Route type (all: all, truck_only: truck only, truck_ship: truck+ship, truck_train: truck+train)')
     parser.add_argument('--max-transfers', type=int, default=10,
-                       help='Số lượng trung chuyển tối đa (mặc định: 10)')
+                       help='Maximum number of transfers (default: 10)')
     
     args = parser.parse_args()
     
     # Validate coordinates
     if not (-90 <= args.origin_lat <= 90) or not (-180 <= args.origin_lon <= 180):
-        print("Lỗi: Tọa độ điểm xuất phát không hợp lệ")
+        print("Error: Invalid origin coordinates")
         sys.exit(1)
     
     if not (-90 <= args.dest_lat <= 90) or not (-180 <= args.dest_lon <= 180):
-        print("Lỗi: Tọa độ điểm đến không hợp lệ")
+        print("Error: Invalid destination coordinates")
         sys.exit(1)
     
     if args.weight <= 0:
-        print("Lỗi: Trọng lượng phải lớn hơn 0")
+        print("Error: Weight must be greater than 0")
         sys.exit(1)
     
     try:
         # Initialize optimizer
         if args.verbose:
-            print("Đang khởi tạo Route Optimizer...")
+            print('Initializing Route Optimizer...')
         
         # Database configuration (optional)
         db_config = {
@@ -90,14 +89,14 @@ Ví dụ sử dụng:
         optimizer = RouteOptimizer(args.data_folder, db_config)
         
         if args.verbose:
-            print("Đang tìm tuyến đường...")
+            print('Finding route...')
         
         # Find route with automatic transfer detection
         results = optimizer.find_route(
             args.origin_lat, args.origin_lon, 
             args.dest_lat, args.dest_lon, 
             args.weight, args.mode,
-            enable_transfer=True,  # Tự động bật
+            enable_transfer=True,  # Automatically enabled
             max_transfers=args.max_transfers,
             show_all=args.show_all
         )
@@ -131,14 +130,6 @@ Ví dụ sử dụng:
                             optimal_route_full = route
                             break
                     
-                    # Debug info
-                    if args.verbose:
-                        print(f"Debug: Found {len(all_routes)} routes")
-                        print(f"Debug: Looking for route with name='{optimal_route_summary.get('name')}' and mode='{optimal_route_summary.get('mode')}'")
-                        if optimal_route_full:
-                            print(f"Debug: Found full route with geometry: {optimal_route_full.get('geometry') is not None}")
-                        else:
-                            print("Debug: No full route found, using summary")
                     
                     # Use full route if found, otherwise use summary
                     selected_route = optimal_route_full if optimal_route_full else optimal_route_summary
@@ -152,7 +143,7 @@ Ví dụ sử dụng:
                         'criteria_used': args.criteria,
                         'show_all': args.show_all,
                         'mode': args.mode,
-                        'enable_transfer': True,  # Tự động bật
+                        'enable_transfer': True,  # Automatically enabled
                         'max_transfers': args.max_transfers
                     }
                 else:
@@ -160,16 +151,16 @@ Ví dụ sử dụng:
                     save_results = results
             
             optimizer.save_results(save_results, args.output)
-            print(f"\nKết quả đã được lưu vào: {args.output}")
+            print(f"\nResults saved to: {args.output}")
             if not args.show_all:
-                print(f"Đã lưu tuyến đường tối ưu theo tiêu chí: {args.criteria}")
+                print(f"Saved optimal route by criteria: {args.criteria}")
         
     except FileNotFoundError as e:
-        print(f"Lỗi: Không tìm thấy file dữ liệu: {e}")
-        print(f"Vui lòng kiểm tra đường dẫn: {args.data_folder}")
+        print(f"Error: Data file not found: {e}")
+        print(f"Please check the path: {args.data_folder}")
         sys.exit(1)
     except Exception as e:
-        print(f"Lỗi: {e}")
+        print(f"Error: {e}")
         if args.verbose:
             import traceback
             traceback.print_exc()
@@ -177,104 +168,50 @@ Ví dụ sử dụng:
 
 
 def print_route_results(results, criteria='fastest', verbose=False, mode='all', show_all=False):
-    """In kết quả tìm tuyến đường"""
+    """Print route search results"""
     print("=" * 60)
-    print("KẾT QUẢ TÌM TUYẾN ĐƯỜNG")
+    print("ROUTE SEARCH RESULTS")
     print("=" * 60)
     
     origin = results['origin']
     destination = results['destination']
     weight = results['weight_tons']
     
-    print(f"Điểm xuất phát: ({origin['lat']:.6f}, {origin['lon']:.6f})")
-    print(f"Điểm đến: ({destination['lat']:.6f}, {destination['lon']:.6f})")
-    print(f"Trọng lượng: {weight} tấn")
-    print(f"Loại đường: {mode}")
+    print(f"Origin: ({origin['lat']:.6f}, {origin['lon']:.6f})")
+    print(f"Destination: ({destination['lat']:.6f}, {destination['lon']:.6f})")
+    print(f"Weight: {weight} tons")
+    print(f"Route type: {mode}")
     print()
     
     routes = results.get('routes', [])
     if not routes:
-        print("Không tìm thấy tuyến đường nào!")
+        print("No routes found!")
         return
     
-    # Chế độ mặc định: Chỉ hiển thị tuyến đường tối ưu theo tiêu chí
-    # if not show_all:
-    #     optimal_routes = results.get('optimal_routes', {})
-    #     if criteria in optimal_routes:
-    #         route = optimal_routes[criteria]
-    #         criteria_names = {
-    #             'fastest': 'NHANH NHẤT',
-    #             'shortest': 'NGẮN NHẤT', 
-    #             'greenest': 'ÍT CO2 NHẤT'
-    #         }
-    #         print(f"🏆 TUYẾN ĐƯỜNG TỐI ƯU ({criteria_names.get(criteria, criteria.upper())}):")
-    #         print("-" * 50)
-    #         print(f"📋 {route['name']}")
-    #         print_route_details(route, verbose)
-            
-    #         # Hiển thị so sánh với các tiêu chí khác
-    #         print("\n📊 SO SÁNH VỚI CÁC TIÊU CHÍ KHÁC:")
-    #         print("-" * 50)
-    #         for other_criteria in ['fastest', 'shortest', 'greenest']:
-    #             if other_criteria != criteria and other_criteria in optimal_routes:
-    #                 other_route = optimal_routes[other_criteria]
-    #                 print(f"  {other_criteria.upper()}: {other_route['name']} "
-    #                       f"({other_route['total_time_minutes']:.1f} phút, "
-    #                       f"{other_route['total_distance_km']:.1f} km, "
-    #                       f"{other_route['co2_emissions_grams']:.1f} g CO2)")
-    #     else:
-    #         print(f"❌ Không tìm thấy tuyến đường tối ưu cho tiêu chí: {criteria}")
-    # else:
-    #     # Chế độ hiển thị tất cả tuyến đường
-    #     print(f"🗺️ TẤT CẢ TUYẾN ĐƯỜNG CÓ THỂ ({len(routes)} tuyến):")
-    #     print("-" * 50)
-        
-    #     for i, route in enumerate(routes, 1):
-    #         print(f"{i}. {route['name']}")
-    #         print_route_details(route, verbose)
-    #         print()
-        
-    #     # Hiển thị tóm tắt tuyến đường tối ưu
-    #     optimal_routes = results.get('optimal_routes', {})
-    #     if optimal_routes:
-    #         print("🏆 TUYẾN ĐƯỜNG TỐI ƯU:")
-    #         print("-" * 50)
-            
-    #         if 'fastest' in optimal_routes:
-    #             route = optimal_routes['fastest']
-    #             print(f"⚡ Nhanh nhất: {route['name']} ({route['total_time_minutes']:.1f} phút)")
-            
-    #         if 'shortest' in optimal_routes:
-    #             route = optimal_routes['shortest']
-    #             print(f"📏 Ngắn nhất: {route['name']} ({route['total_distance_km']:.1f} km)")
-            
-    #         if 'greenest' in optimal_routes:
-    #             route = optimal_routes['greenest']
-    #             print(f"🌱 Ít CO2 nhất: {route['name']} ({route['co2_emissions_grams']:.1f} g)")
 
 
 def print_route_details(route, verbose=False):
-    """In chi tiết một tuyến đường"""
-    print(f"   Thời gian: {route['total_time_minutes']:.1f} phút")
-    print(f"   Khoảng cách: {route['total_distance_km']:.1f} km")
-    print(f"   Phát thải CO2: {route['co2_emissions_grams']:.1f} g")
+    """Print details of a route"""
+    print(f"   Time: {route['total_time_minutes']:.1f} minutes")
+    print(f"   Distance: {route['total_distance_km']:.1f} km")
+    print(f"   CO2 emissions: {route['co2_emissions_grams']:.1f} g")
     
     if verbose:
         if 'origin_port' in route and 'dest_port' in route:
-            print(f"   Cảng xuất phát: {route['origin_port']}")
-            print(f"   Cảng đến: {route['dest_port']}")
+            print(f"   Origin port: {route['origin_port']}")
+            print(f"   Destination port: {route['dest_port']}")
             if 'transfer_port' in route:
-                print(f"   Cảng trung chuyển: {route['transfer_port']}")
+                print(f"   Transfer port: {route['transfer_port']}")
             if 'ship_time_hours' in route:
-                print(f"   Thời gian tàu biển: {route['ship_time_hours']:.1f} giờ")
+                print(f"   Ship time: {route['ship_time_hours']:.1f} hours")
         
         if 'origin_station' in route and 'dest_station' in route:
-            print(f"   Ga xuất phát: {route['origin_station']}")
-            print(f"   Ga đến: {route['dest_station']}")
+            print(f"   Origin station: {route['origin_station']}")
+            print(f"   Destination station: {route['dest_station']}")
             if 'transfer_station' in route:
-                print(f"   Ga trung chuyển: {route['transfer_station']}")
+                print(f"   Transfer station: {route['transfer_station']}")
             if 'train_time_minutes' in route:
-                print(f"   Thời gian tàu hỏa: {route['train_time_minutes']:.1f} phút")
+                print(f"   Train time: {route['train_time_minutes']:.1f} minutes")
 
 
 if __name__ == '__main__':
