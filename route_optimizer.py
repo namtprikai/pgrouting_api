@@ -9,7 +9,11 @@ from shapely.geometry import Point, LineString
 from datetime import timedelta
 import pyproj
 from typing import Dict, List, Optional, Tuple
+import numpy as np
 import json
+from shapely import wkt
+import math
+
 try:
     import psycopg2
     import psycopg2.pool
@@ -38,8 +42,8 @@ class RouteOptimizer:
         if db_config is None:
             db_config = {
                 'host': 'localhost',
-                'port': 5435,
-                'database': 'pgrouting_japan_logistics',
+                'port': 5434,
+                'database': 'pgrouting',
                 'user': 'postgres',
                 'password': 'pgrouting'
             }
@@ -209,7 +213,7 @@ class RouteOptimizer:
             dest_lat: Destination latitude
             dest_lon: Destination longitude
             weight_tons: Cargo weight (tons)
-            mode: Route type ('all', 'truck_only', 'truck_ship', 'truck_train')
+            mode: Route type ('all', 'truck_only', 'truck_ship', 'truck_train', 'truck_ship_train', 'truck_train_ship', 'truck_train_ship_train')
             enable_transfer: Enable transfer mode
             max_transfers: Maximum number of transfers (default: 10)
             show_all: Show all routes (False: only optimal)
@@ -220,7 +224,7 @@ class RouteOptimizer:
         print(f"Finding route from ({origin_lat}, {origin_lon}) to ({dest_lat}, {dest_lon}) with mode: {mode}")
         
         # Validate mode parameter
-        valid_modes = ['all', 'truck_only', 'truck_ship', 'truck_train']
+        valid_modes = ['all', 'truck_only', 'truck_ship', 'truck_train', 'truck_ship_train', 'truck_train_ship', 'truck_train_ship_train']
         if mode not in valid_modes:
             raise ValueError(f"Invalid mode '{mode}'. Must be one of: {valid_modes}")
         
@@ -244,7 +248,7 @@ class RouteOptimizer:
         return {
             'origin': {'lat': origin_lat, 'lon': origin_lon},
             'destination': {'lat': dest_lat, 'lon': dest_lon},
-            'weight_tons': weight_tons,
+            'weight_tons': 0,
             'routes': routes,
             'optimal_routes': optimal_routes
         }
@@ -304,6 +308,9 @@ class RouteOptimizer:
             'origin_station': origin_stations.iloc[0] if not origin_stations.empty else None,
             'dest_station': dest_stations.iloc[0] if not dest_stations.empty else None
         }
+    
+    def _nearest_station(self, lon: float, lat: float):
+        return self._db_query_one("SELECT * FROM nearest_station(%s, %s)", (lon, lat))
     
     def _calculate_routes_by_mode(self, origin_point: Point, dest_point: Point,
                                 nearest_ports: Dict, nearest_stations: Dict, 
@@ -366,8 +373,271 @@ class RouteOptimizer:
                         )
                         routes.extend(combined_routes)
         
+        # Route 4: Truck + Ship + Train
+        if mode in ['all', 'truck_ship_train']:
+            # 1. Find origin port
+            origin_port = nearest_ports['origin_port']
+
+            # 2. Find dest port
+            dest_port = nearest_ports['dest_port']
+
+            # 3. Find origin train station
+            stO = self._nearest_station(float(dest_port['X']), float(dest_port['Y']))
+
+            # 4. Find destination train station
+            stD = self._nearest_station(dest_point.x, dest_point.y)
+
+            # Step 1: Find route from origin point to ship port
+            truck_O_ptO = self._get_truck_routes_to_ports(
+                origin_point, dest_point, nearest_ports
+            )
+
+            if truck_O_ptO:
+                isLineString = isinstance(truck_O_ptO['origin_to_port']['geometry'], LineString)
+                if truck_O_ptO['origin_to_port']['geometry'] and isLineString:
+                    truck_O_ptO_geometry = truck_O_ptO['origin_to_port']['geometry']
+                else:
+                    truck_O_ptO_geometry = truck_O_ptO['origin_to_port']['geometry']['coordinates']
+            else:
+                truck_O_ptO_geometry = LineString()
+            
+            truck_O_ptO_distance = truck_O_ptO['origin_to_port']['distance']
+            truck_O_ptO_co2_emissions = self._calculate_co2_emissions('truck', weight_tons, truck_O_ptO_distance/1000)
+
+            # Step 2: Find ship route
+            ptO_ptD_routes = self._find_ship_routes_between_ports(
+                nearest_ports, weight_tons, max_transfers, show_all
+            )
+
+            ptO_ptD_distance = 10000
+            if isinstance(ptO_ptD_routes, str):
+                ptO_ptD_geometry = ptO_ptD_routes
+            elif isinstance(ptO_ptD_routes, list) and len(ptO_ptD_routes) > 0:
+                if isinstance(ptO_ptD_routes[0], dict) and 'geometry' in ptO_ptD_routes[0]:
+                    ptO_ptD_geometry = ptO_ptD_routes[0]['geometry']
+                else:
+                    ptO_ptD_geometry = ptO_ptD_routes[0]
+            elif not ptO_ptD_routes:
+                origin_port_point = (float(origin_port['X']), float(origin_port['Y']))
+                dest_port_point = (float(dest_port['X']), float(dest_port['Y']))
+                ptO_ptD_geometry = LineString([origin_port_point, dest_port_point])
+                ptO_ptD_distance = self._calculate_distance(float(origin_port['Y']), float(origin_port['X']), float(dest_port['Y']), float(dest_port['X']))
+            else:
+                ptO_ptD_geometry = ptO_ptD_routes
+            
+            ptO_ptD_co2_emissions = self._calculate_co2_emissions('ship', weight_tons, ptO_ptD_distance/1000)
+
+            # Step 3: Find route from port -> train station
+            route_truck_mm = self._route_truck_mm(float(dest_port['X']), float(dest_port['Y']), stO['slon'], stO['slat'])
+            if route_truck_mm:
+                ptD_stO_routes = LineString(route_truck_mm['geometry']['coordinates'])
+                ptD_stO_distance = route_truck_mm['distance_km']
+            else:
+                dest_port_point = (dest_port['X'], dest_port['Y'])
+                origin_train_point = (stO['slon'], stO['slat'])
+                ptD_stO_routes = LineString([dest_port_point, origin_train_point])
+                ptD_stO_distance = self._calculate_distance(float(dest_port['Y']), float(dest_port['X']), stO['slat'], stO['slon'])
+            
+            ptD_stO_co2_emissions = self._calculate_co2_emissions('truck', weight_tons, ptD_stO_distance/1000)
+
+            # Step 4: Find train route
+            train_coords = LineString([
+                (stO['slon'], stO['slat']),
+                (stD['slon'], stD['slat'])
+            ])
+            stO_stD_distance = self._calculate_distance(stO['slat'], stO['slon'], stD['slat'], stD['slon'])
+            stO_stD_co2_emissions = self._calculate_co2_emissions('train', weight_tons, stO_stD_distance/1000)
+
+            # Step 5: Find route from destination station route to destination point
+            stD_dest_routes = self._route_truck_mm(stD['slon'], stD['slat'], dest_point.x, dest_point.y)
+            if stD_dest_routes:
+                stD_dest_geometry = LineString(stD_dest_routes['geometry']['coordinates'])
+                stD_dest_distance = stD_dest_routes['distance_km']
+            else:
+                stD_point = (stD['slon'], stD['slat'])
+                dest_point = (dest_point.x, dest_point.y)
+                ptD_stO_routes = LineString([stD_point, dest_point])
+                stD_dest_distance = self._calculate_distance(stD['lat'], stD['lon'], dest_point.y, dest_point.x)
+
+            stD_dest_co2_emissions = self._calculate_co2_emissions('truck', weight_tons, stD_dest_distance/1000)
+            
+            total_distances = self._calc_total_distance([truck_O_ptO_distance, ptO_ptD_distance, ptD_stO_distance, stO_stD_distance, stD_dest_distance])
+            
+            print(origin_port, 'origin_port')
+
+            data_infos = {
+                "origin_port": origin_port['C02_005'],
+                "dest_port": dest_port['C02_005'],
+                "origin_station": stO['name'],
+                "dest_station": stD['name'],
+                "co2_emissions": truck_O_ptO_co2_emissions + ptO_ptD_co2_emissions + ptD_stO_co2_emissions + stO_stD_co2_emissions + stD_dest_co2_emissions,
+                "ship_time": 0,
+                "train_time_minutes": 0,
+                "truck_time_minutes": 0,
+                "truck_distance_km": truck_O_ptO_distance + ptD_stO_distance + stD_dest_distance
+            }
+
+            listLineStrings = [truck_O_ptO_geometry, ptO_ptD_geometry, ptD_stO_routes, train_coords, stD_dest_geometry]
+            combined_routes = self._combine_linestrings(listLineStrings, total_distances, data_infos)
+            routes.extend(combined_routes)
         return routes
     
+    def _calc_total_distance(self, list_distances):
+        return sum(list_distances)
+    
+    def _combine_linestrings(self, linestrings, total_distances, data_infos, target_crs='EPSG:4326', max_gap_meters=100):
+        if not linestrings:
+            return None
+        
+        transformer = pyproj.Transformer.from_crs('EPSG:3857', 'EPSG:4326', always_xy=True)
+        
+        segments = []
+        
+        for part in linestrings:
+            if part is None:
+                continue
+            
+            coords = None
+            
+            if isinstance(part, str):
+                try:
+                    geom = wkt.loads(part)
+                    if geom.geom_type == 'LineString':
+                        coords = list(geom.coords)
+                    elif geom.geom_type == 'MultiLineString':
+                        for line in geom.geoms:
+                            segment_coords = list(line.coords)
+                            normalized = self._normalize_coords(segment_coords, transformer, target_crs)
+                            if normalized:
+                                segments.append(normalized)
+                        continue
+                except Exception as e:
+                    print(f"Can't parse WKT string: {part[:50]}... - {e}")
+                    continue
+            
+            elif hasattr(part, 'coords'):
+                coords = list(part.coords)
+            
+            elif isinstance(part, (list, tuple)):
+                if len(part) > 0:
+                    if isinstance(part[0], (list, tuple)):
+                        coords = part
+                    elif len(part) == 2 and isinstance(part[0], (int, float)):
+                        coords = [part]
+                    else:
+                        coords = part
+            
+            elif isinstance(part, dict):
+                if 'type' in part and 'coordinates' in part:
+                    from shapely.geometry import shape
+                    geom = shape(part)
+                    coords = list(geom.coords)
+                elif 'coordinates' in part:
+                    coords = part['coordinates']
+            
+            if coords and len(coords) >= 1:
+                normalized = self._normalize_coords(coords, transformer, target_crs)
+                if normalized:
+                    segments.append(normalized)
+        
+        if not segments:
+            return None
+        
+        def distance_meters(p1, p2):
+            if target_crs == 'EPSG:4326':
+                lat1, lon1 = p1[1], p1[0]
+                lat2, lon2 = p2[1], p2[0]
+                
+                dlat = math.radians(lat2 - lat1)
+                dlon = math.radians(lon2 - lon1)
+                
+                a = math.sin(dlat/2)**2 + math.cos(math.radians(lat1)) * \
+                    math.cos(math.radians(lat2)) * math.sin(dlon/2)**2
+                c = 2 * math.asin(math.sqrt(a))
+                
+                return 6371000 * c
+            else:
+                return math.sqrt((p2[0] - p1[0])**2 + (p2[1] - p1[1])**2)
+        
+        merged_segments = []
+        current_segment = segments[0]
+        
+        for next_segment in segments[1:]:
+            gap = distance_meters(current_segment[-1], next_segment[0])
+                        
+            if gap <= max_gap_meters:
+                if current_segment[-1] == next_segment[0]:
+                    current_segment.extend(next_segment[1:])
+                else:
+                    current_segment.extend(next_segment)
+            else:
+                merged_segments.append(current_segment)
+                current_segment = next_segment
+        
+        merged_segments.append(current_segment)
+                
+        results = []
+        for idx, segment in enumerate(merged_segments):
+            if len(segment) < 2:
+                continue
+                
+            geometry = LineString(segment)
+            
+            total_distance_m = 0
+            for i in range(len(segment) - 1):
+                total_distance_m += distance_meters(segment[i], segment[i+1])
+            
+            results.append({
+                'mode': 'truck_ship_train',
+                'segment_index': idx,
+                'total_segments': len(merged_segments),
+                'is_continuous': len(merged_segments) == 1,
+                'total_time_minutes': '',
+                'total_distance_meters': str(int(total_distances)),
+                'total_distance_km': total_distance_m / 1000,
+                'co2_emissions_grams': data_infos['co2_emissions'],
+                'origin_port': data_infos['origin_port'],
+                'dest_port': data_infos['dest_port'],
+                'origin_station': data_infos['origin_station'],
+                'dest_station': data_infos['dest_station'],
+                'transfer_station': '',
+                'ship_time_hours': data_infos['ship_time'],
+                'train_time_minutes': data_infos['train_time_minutes'],
+                'truck_time_minutes': data_infos['truck_time_minutes'],
+                'truck_distance_km': data_infos['truck_distance_km'],
+                'geometry': geometry
+            })
+        
+        return results if results else None
+
+
+    def _normalize_coords(self, coords, transformer, target_crs):
+        normalized = []
+        
+        for coord in coords:
+            try:
+                if isinstance(coord, (list, tuple)) and len(coord) >= 2:
+                    x = float(coord[0])
+                    y = float(coord[1])
+                else:
+                    continue
+                
+                if abs(x) > 200 or abs(y) > 200:
+                    if target_crs == 'EPSG:4326':
+                        x, y = transformer.transform(x, y)
+                else:
+                    if target_crs == 'EPSG:3857':
+                        transformer_to_3857 = pyproj.Transformer.from_crs('EPSG:4326', 'EPSG:3857', always_xy=True)
+                        x, y = transformer_to_3857.transform(x, y)
+                
+                normalized.append((x, y))
+                
+            except (ValueError, TypeError, IndexError) as e:
+                print(f"coord error: {coord} - {e}")
+                continue
+        
+        return normalized if len(normalized) >= 2 else None
+
     def _calculate_truck_route(self, origin_point: Point, dest_point: Point, 
                               weight_tons: float) -> Optional[Dict]:
         """Calculate pure truck route"""
@@ -382,12 +652,12 @@ class RouteOptimizer:
                 return {
                     'mode': 'truck_only',
                     'name': 'Truck only',
-                    'total_time_minutes': truck_info['time'],
-                    'total_distance_meters': truck_info['distance'],
-                    'total_distance_km': distance_km,
-                    'co2_emissions_grams': co2_emissions,
-                    'truck_time_minutes': truck_info['time'],
-                    'truck_distance_km': distance_km,
+                    'total_time_minutes': 0 if np.isnan(truck_info['time']) else truck_info['time'],
+                    'total_distance_meters': 0 if np.isnan(truck_info['distance']) else truck_info['distance'],
+                    'total_distance_km':  0 if np.isnan(distance_km) else distance_km,
+                    'co2_emissions_grams': 0 if np.isnan(co2_emissions) else co2_emissions,
+                    'truck_time_minutes': 0 if np.isnan(truck_info['time']) else truck_info['time'],
+                    'truck_distance_km': 0 if np.isnan(distance_km) else distance_km,
                     'geometry': truck_info['geometry']
                 }
         except Exception as e:
@@ -1040,7 +1310,7 @@ class RouteOptimizer:
             
             # Find transfer ports
             transfer_ports = set(from_origin) & set(to_dest)
-            
+
             routes = []
             for transfer_port in list(transfer_ports)[:max_transfers]:
                 # Find ship routes via transfer
@@ -1275,7 +1545,7 @@ class RouteOptimizer:
             (self.ferry_time['Departure_Location_(National_Land_Numerical_Information_Format)'] == origin_port) &
             (self.ferry_time['Arrival_Location_(National_Land_Numerical_Information_Format)'] == dest_port)
         ]
-        
+
         if not route.empty:
             route_time = route['Route_Time'].iloc[0]
             # Calculate distance between ports
