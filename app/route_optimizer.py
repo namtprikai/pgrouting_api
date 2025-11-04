@@ -322,13 +322,13 @@ class RouteOptimizer:
         routes = []
         
         # Route 1: Truck only
-        if mode in ['all', 'truck_only']:
+        if mode == 'truck_only':
             truck_route = self._calculate_truck_route(origin_point, dest_point, weight_tons)
             if truck_route:
                 routes.append(truck_route)
         
         # Route 2: Truck + Ship
-        if mode in ['all', 'truck_ship']:
+        if mode == 'truck_ship':
             if (nearest_ports['origin_port'] is not None and 
                 nearest_ports['dest_port'] is not None):
                 
@@ -351,7 +351,7 @@ class RouteOptimizer:
                         routes.extend(combined_routes)
         
         # Route 3: Truck + Train
-        if mode in ['all', 'truck_train']:
+        if mode == 'truck_train':
             if (nearest_stations['origin_station'] is not None and 
                 nearest_stations['dest_station'] is not None):
                 
@@ -374,7 +374,7 @@ class RouteOptimizer:
                         routes.extend(combined_routes)
         
         # Route 4: Truck + Ship + Train
-        if mode in ['all', 'truck_ship_train']:
+        if mode == 'truck_ship_train':
             # 1. Find origin port
             origin_port = nearest_ports['origin_port']
 

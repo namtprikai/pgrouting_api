@@ -7,3 +7,4 @@ importer_data/貨物船_位置情報（国土数値情報）.csv
 importer_data/貨物駅_位置情報.xlsx
 profile.out
 config/*
+data_file/*
