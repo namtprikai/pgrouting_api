@@ -1,0 +1,212 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            142.6816,
+            43.3472
+          ],
+          [
+            142.39149734240362,
+            43.34717499531167
+          ],
+          [
+            141.01434519794944,
+            38.27658218287389
+          ],
+          [
+            141.09087231,
+            38.32253852
+          ],
+          [
+            141.09087231,
+            38.32253852
+          ],
+          [
+            140.3112,
+            38.4535
+          ]
+        ]
+      },
+      "properties": {
+        "mode": "truck_train_ship",
+        "total_time_minutes": 532.7871871536335,
+        "total_distance_meters": 676519.663192727,
+        "total_distance_km": 676.519663192727,
+        "co2_emissions_grams": 158669.57721690653,
+        "origin_port": "仙台塩釜港",
+        "dest_port": "仙台塩釜港",
+        "origin_station": "富良野",
+        "dest_station": "",
+        "transfer_port": "",
+        "transfer_station": "仙台港",
+        "ship_time_hours": 0.0,
+        "train_time_minutes": 431.19742811728077,
+        "truck_time_minutes": 101.58975903635269,
+        "truck_distance_km": 101.58975903635269
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          142.6816,
+          43.3472
+        ]
+      },
+      "properties": {
+        "point_type": "truck_start",
+        "name": "Origin"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          142.39149734240362,
+          43.34717499531167
+        ]
+      },
+      "properties": {
+        "point_type": "station_origin",
+        "name": "富良野"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          141.01434519794944,
+          38.27658218287389
+        ]
+      },
+      "properties": {
+        "point_type": "station_transfer",
+        "name": "仙台港"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          141.09087231,
+          38.32253852
+        ]
+      },
+      "properties": {
+        "point_type": "port_origin",
+        "name": "仙台塩釜港"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          141.09087231,
+          38.32253852
+        ]
+      },
+      "properties": {
+        "point_type": "port_dest",
+        "name": "仙台塩釜港"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          140.3112,
+          38.4535
+        ]
+      },
+      "properties": {
+        "point_type": "destination",
+        "name": "Destination"
+      }
+    }
+  ],
+  "properties": {
+    "origin": {
+      "lat": 43.3472,
+      "lon": 142.6816
+    },
+    "destination": {
+      "lat": 38.4535,
+      "lon": 140.3112
+    },
+    "weight_tons": 0,
+    "optimal_routes": {
+      "fastest": {
+        "mode": "truck_train_ship",
+        "name": "Truck → Train → Ship",
+        "total_time_minutes": 532.7871871536335,
+        "total_distance_meters": 676519.663192727,
+        "total_distance_km": 676.519663192727,
+        "co2_emissions_grams": 158669.57721690653,
+        "origin_station": "富良野",
+        "transfer_station": "仙台港",
+        "origin_port": "仙台塩釜港",
+        "dest_port": "仙台塩釜港",
+        "train_time_minutes": 431.19742811728077,
+        "ship_time_hours": 0.0,
+        "truck_time_minutes": 101.58975903635269,
+        "truck_distance_km": 101.58975903635269,
+        "points": [
+          {
+            "type": "truck_start",
+            "name": "Origin",
+            "lat": 43.3472,
+            "lon": 142.6816
+          },
+          {
+            "type": "station_origin",
+            "name": "富良野",
+            "lat": 43.34717499531167,
+            "lon": 142.39149734240362
+          },
+          {
+            "type": "station_transfer",
+            "name": "仙台港",
+            "lat": 38.27658218287389,
+            "lon": 141.01434519794944
+          },
+          {
+            "type": "port_origin",
+            "name": "仙台塩釜港",
+            "lat": 38.32253852,
+            "lon": 141.09087231
+          },
+          {
+            "type": "port_dest",
+            "name": "仙台塩釜港",
+            "lat": 38.32253852,
+            "lon": 141.09087231
+          },
+          {
+            "type": "destination",
+            "name": "Destination",
+            "lat": 38.4535,
+            "lon": 140.3112
+          }
+        ]
+      }
+    },
+    "search_options": {
+      "criteria_used": "fastest",
+      "show_all": false,
+      "mode": "truck_train_ship",
+      "enable_transfer": true,
+      "max_transfers": 10
+    }
+  }
+}

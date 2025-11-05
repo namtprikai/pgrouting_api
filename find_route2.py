@@ -134,18 +134,65 @@ def main():
                     # Use full route if found, otherwise use summary
                     selected_route = optimal_route_full if optimal_route_full else optimal_route_summary
                     
-                    save_results = {
-                        'origin': results.get('origin', {}),
-                        'destination': results.get('destination', {}),
-                        'weight_tons': results.get('weight_tons', 10.0),
-                        'routes': [selected_route],
-                        'optimal_routes': {args.criteria: optimal_route_summary},
-                        'criteria_used': args.criteria,
-                        'show_all': args.show_all,
-                        'mode': args.mode,
-                        'enable_transfer': True,  # Automatically enabled
-                        'max_transfers': args.max_transfers
-                    }
+                    if selected_route:
+                        save_results = {
+                            "type": "FeatureCollection",
+                            "features": [
+                                {
+                                    "type": "Feature",
+                                    "geometry": selected_route.get("geometry", {}),
+                                    "properties": {
+                                        "mode": selected_route.get("mode"),
+                                        "total_time_minutes": selected_route.get("total_time_minutes"),
+                                        "total_distance_meters": selected_route.get("total_distance_meters"),
+                                        "total_distance_km": selected_route.get("total_distance_km"),
+                                        "co2_emissions_grams": selected_route.get("co2_emissions_grams"),
+                                        "origin_port": selected_route.get("origin_port"),
+                                        "dest_port": selected_route.get("dest_port"),
+                                        "origin_station": selected_route.get("origin_station"),
+                                        "transfer_station": selected_route.get("transfer_station"),
+                                        "train_time_minutes": selected_route.get("train_time_minutes"),
+                                        "ship_time_hours": selected_route.get("ship_time_hours"),
+                                        "truck_time_minutes": selected_route.get("truck_time_minutes"),
+                                        "truck_distance_km": selected_route.get("truck_distance_km"),
+                                        "points": selected_route.get("points", []),
+                                    },
+                                }
+                            ],
+                            "properties": {
+                                "origin": results.get("origin", {}),
+                                "destination": results.get("destination", {}),
+                                "weight_tons": results.get("weight_tons", 10.0),
+                                "optimal_routes": {args.criteria: optimal_route_summary},
+                                "search_options": {
+                                    "criteria_used": args.criteria,
+                                    "show_all": args.show_all,
+                                    "mode": args.mode,
+                                    "enable_transfer": True,
+                                    "max_transfers": args.max_transfers,
+                                },
+                            },
+                        }
+                    else:
+                        # fallback nếu không tìm thấy route (giữ cấu trúc cũ để không lỗi)
+                        save_results = {
+                            "type": "FeatureCollection",
+                            "features": [],
+                            "properties": {
+                                "origin": results.get("origin", {}),
+                                "destination": results.get("destination", {}),
+                                "weight_tons": results.get("weight_tons", 10.0),
+                                "optimal_routes": {},
+                                "search_options": {
+                                    "criteria_used": args.criteria,
+                                    "show_all": args.show_all,
+                                    "mode": args.mode,
+                                    "enable_transfer": True,
+                                    "max_transfers": args.max_transfers,
+                                },
+                            },
+                        }
+
                 else:
                     # Fallback to all routes if optimal route not found
                     save_results = results

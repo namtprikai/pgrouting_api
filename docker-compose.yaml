@@ -10,8 +10,9 @@ services:
       - db_data:/var/lib/postgresql/data
       - ./db_init:/scripts
     ports:
-      - 5434:5432
+      - 5432:5432
     restart: unless-stopped
+    hostname: database_pg
 
   pgrouting_api:
     build: 
@@ -21,7 +22,7 @@ services:
     ports:
       - "8000:8000"
     environment:
-      PGHOST: db
+      PGHOST: database_pg
       PGPORT: 5432
       PGUSER: postgres
       PGPASSWORD: pgrouting
@@ -38,6 +39,7 @@ services:
     depends_on:
       - db
     volumes:
-      - ./data:/data
+      - importer_data:/data
 volumes:
   db_data:
+  importer_data:

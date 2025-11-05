@@ -119,7 +119,7 @@ def main():
     # Config database
     db_config = {
         'host': 'localhost',
-        'port': 5434,
+        'port': 5432,
         'database': 'pgrouting',
         'username': 'postgres',
         'password': 'pgrouting'

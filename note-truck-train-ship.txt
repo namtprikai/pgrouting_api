@@ -1,0 +1,50 @@
+Tóm tắt
+Truck: từ origin → ga gần nhất
+Train: từ ga đó → ga gần cảng
+Truck: từ ga gần cảng → cảng
+Ship: từ cảng → cảng gần đích
+Truck: từ cảng gần đích → đích
+
+
+2 điểm ở 2 vùng khác nhau, cách nhau bởi biển (ORIGIN TRUCK TRAIN TRAIN SHIP DESTINATION)
+python find_route.py 39.7382 140.8651 42.3750 140.1133 --mode truck_train_ship --output result
+python find_route.py 43.3472 142.6816 38.4535 140.3112 --mode truck_train_ship --output result
+
+
+1 điểm bất kỳ - 1 điểm là cảng (TRUCK TRAIN SHIP)
+python find_route.py 43.3472 142.6816 38.3225 141.0909 --mode truck_train_ship --output result
+python find_route.py 40.0131 140.8769 38.3225 141.0909 --mode truck_train_ship --output result
+
+
+2 Điểm bất kỳ trong 1 khu vực (ORIGIN TRUCK TRAIN TRAIN SHIP DESTINATION)
+python find_route.py 39.7382 140.8651 37.3874 140.7702 --mode truck_train_ship --output result
+python find_route.py 38.3936 139.9050 40.7919 141.0831 --mode truck_train_ship --output result
+
+
+Sử dụng file normalize_geojson_with_points.py để có thể xuất file geojson có các nút điểm cho dễ nhìn hơn
+python normalize_geojson_with_points.py result.geojson result.geojson
+python normalize_geojson_with_points.py result.geojson
+
+
+
+Today tasks:
+1. Code phần truck_ship_train 100%
+
+Task progress:
+1. 85%
+
+Issues:
+Sau khi đến cảng gần nhất thì đang gặp vấn đề là nó nối thẳng đến destination luôn
+nên cần xử lý để nó đến station gần nhất trước hoặc di chuyển về destination bằng truck
+
+Result:
+tạo thành công file geojson và hiển thị các đường đi
+trình tự là
+Truck: từ origin → ga gần nhất
+Train: từ ga đó → ga gần cảng
+Truck: từ ga gần cảng → cảng
+Ship: từ cảng → cảng gần đích
+Truck: từ cảng gần đích → đích (cần tách ra từ cảng đến ga hoặc truck thay vì nối thẳng)
+
+các câu lệnh test thử và các trường hợp test trong file note-truck-train-ship.txt
+các file ảnh test thử trên github nhánh feature/test_truck_ship_train, ở thư mục imgs
