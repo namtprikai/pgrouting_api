@@ -5,6 +5,10 @@ importer_data/japan_highways.osm.bz2
 importer_data/mapconfig.xml
 importer_data/貨物船_位置情報（国土数値情報）.csv
 importer_data/貨物駅_位置情報.xlsx
+importer_data/L013101物流拠点出発地到着地リスト.csv
+importer_data/貨物船_時刻表（2024年版海上定期便ガイド）.csv
+importer_data/貨物駅_時刻表.xlsx
+importer_data/chubu-highways.osm.bz2
 profile.out
 config/*
 data_file/*
