@@ -15,16 +15,24 @@
             43.34717499531167
           ],
           [
+            141.63270349591141,
+            42.651680576187225
+          ],
+          [
+            141.72194444,
+            42.59666667
+          ],
+          [
+            141.09087231,
+            38.32253852
+          ],
+          [
             141.01434519794944,
             38.27658218287389
           ],
           [
-            141.09087231,
-            38.32253852
-          ],
-          [
-            141.09087231,
-            38.32253852
+            140.32745915499584,
+            38.247128890715004
           ],
           [
             140.3112,
@@ -34,20 +42,20 @@
       },
       "properties": {
         "mode": "truck_train_ship",
-        "total_time_minutes": 532.7871871536335,
-        "total_distance_meters": 676519.663192727,
-        "total_distance_km": 676.519663192727,
-        "co2_emissions_grams": 158669.57721690653,
-        "origin_port": "仙台塩釜港",
+        "total_time_minutes": 1139.0554125059728,
+        "total_distance_meters": 701233.8210767433,
+        "total_distance_km": 701.2338210767433,
+        "co2_emissions_grams": 107302.9265004636,
+        "origin_port": "苫小牧港",
         "dest_port": "仙台塩釜港",
         "origin_station": "富良野",
-        "dest_station": "",
+        "dest_station": "山形オフレールステーション",
         "transfer_port": "",
-        "transfer_station": "仙台港",
-        "ship_time_hours": 0.0,
-        "train_time_minutes": 431.19742811728077,
-        "truck_time_minutes": 101.58975903635269,
-        "truck_distance_km": 101.58975903635269
+        "transfer_station": "",
+        "ship_time_hours": 15.920626151398057,
+        "train_time_minutes": 119.39157933813674,
+        "truck_time_minutes": 64.42626408395262,
+        "truck_distance_km": 64.42626408395263
       }
     },
     {
@@ -60,7 +68,7 @@
         ]
       },
       "properties": {
-        "point_type": "truck_start",
+        "point_type": "origin",
         "name": "Origin"
       }
     },
@@ -74,8 +82,50 @@
         ]
       },
       "properties": {
-        "point_type": "station_origin",
+        "point_type": "origin_station",
         "name": "富良野"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          141.63270349591141,
+          42.651680576187225
+        ]
+      },
+      "properties": {
+        "point_type": "port_station",
+        "name": "苫小牧貨物"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          141.72194444,
+          42.59666667
+        ]
+      },
+      "properties": {
+        "point_type": "origin_port",
+        "name": "苫小牧港"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          141.09087231,
+          38.32253852
+        ]
+      },
+      "properties": {
+        "point_type": "dest_port",
+        "name": "仙台塩釜港"
       }
     },
     {
@@ -88,7 +138,7 @@
         ]
       },
       "properties": {
-        "point_type": "station_transfer",
+        "point_type": "dest_port_station",
         "name": "仙台港"
       }
     },
@@ -97,27 +147,13 @@
       "geometry": {
         "type": "Point",
         "coordinates": [
-          141.09087231,
-          38.32253852
+          140.32745915499584,
+          38.247128890715004
         ]
       },
       "properties": {
-        "point_type": "port_origin",
-        "name": "仙台塩釜港"
-      }
-    },
-    {
-      "type": "Feature",
-      "geometry": {
-        "type": "Point",
-        "coordinates": [
-          141.09087231,
-          38.32253852
-        ]
-      },
-      "properties": {
-        "point_type": "port_dest",
-        "name": "仙台塩釜港"
+        "point_type": "dest_station",
+        "name": "山形オフレールステーション"
       }
     },
     {
@@ -148,49 +184,61 @@
     "optimal_routes": {
       "fastest": {
         "mode": "truck_train_ship",
-        "name": "Truck → Train → Ship",
-        "total_time_minutes": 532.7871871536335,
-        "total_distance_meters": 676519.663192727,
-        "total_distance_km": 676.519663192727,
-        "co2_emissions_grams": 158669.57721690653,
+        "name": "Truck → Train → Ship (Optimized)",
+        "total_time_minutes": 1139.0554125059728,
+        "total_distance_meters": 701233.8210767433,
+        "total_distance_km": 701.2338210767433,
+        "co2_emissions_grams": 107302.9265004636,
         "origin_station": "富良野",
-        "transfer_station": "仙台港",
-        "origin_port": "仙台塩釜港",
+        "origin_port": "苫小牧港",
         "dest_port": "仙台塩釜港",
-        "train_time_minutes": 431.19742811728077,
-        "ship_time_hours": 0.0,
-        "truck_time_minutes": 101.58975903635269,
-        "truck_distance_km": 101.58975903635269,
+        "dest_station": "山形オフレールステーション",
+        "train_time_minutes": 119.39157933813674,
+        "ship_time_hours": 15.920626151398057,
+        "truck_time_minutes": 64.42626408395262,
+        "truck_distance_km": 64.42626408395263,
         "points": [
           {
-            "type": "truck_start",
+            "type": "origin",
             "name": "Origin",
             "lat": 43.3472,
             "lon": 142.6816
           },
           {
-            "type": "station_origin",
+            "type": "origin_station",
             "name": "富良野",
             "lat": 43.34717499531167,
             "lon": 142.39149734240362
           },
           {
-            "type": "station_transfer",
+            "type": "port_station",
+            "name": "苫小牧貨物",
+            "lat": 42.651680576187225,
+            "lon": 141.63270349591141
+          },
+          {
+            "type": "origin_port",
+            "name": "苫小牧港",
+            "lat": 42.59666667,
+            "lon": 141.72194444
+          },
+          {
+            "type": "dest_port",
+            "name": "仙台塩釜港",
+            "lat": 38.32253852,
+            "lon": 141.09087231
+          },
+          {
+            "type": "dest_port_station",
             "name": "仙台港",
             "lat": 38.27658218287389,
             "lon": 141.01434519794944
           },
           {
-            "type": "port_origin",
-            "name": "仙台塩釜港",
-            "lat": 38.32253852,
-            "lon": 141.09087231
-          },
-          {
-            "type": "port_dest",
-            "name": "仙台塩釜港",
-            "lat": 38.32253852,
-            "lon": 141.09087231
+            "type": "dest_station",
+            "name": "山形オフレールステーション",
+            "lat": 38.247128890715004,
+            "lon": 140.32745915499584
           },
           {
             "type": "destination",

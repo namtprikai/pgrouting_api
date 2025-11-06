@@ -1639,248 +1639,324 @@ class RouteOptimizer:
         
         # LineString([(130.5,31.7), (131.0,32.0), (133.5,33.9), (133.9,33.96)])
         return LineString(all_coords) if len(all_coords) >= 2 else None
-    
+        
     def _calculate_truck_train_ship_route(self, origin_point, dest_point, nearest_ports, nearest_stations, weight_tons):
         """
-            Hàm tính toán tuyến đường kết hợp 3 phương tiện: Truck → Train → Ship.
-            Đây là phiên bản "Robust" (chống lỗi), có kiểm tra dữ liệu (defensive checks) 
-            và cơ chế dự phòng (fallbacks) khi thiếu thông tin.
-            Trả về một dict chứa toàn bộ thông tin tuyến đường, hoặc None nếu không tính được.
-            Khoảng cách tính bằng mét (m), thời gian tính bằng phút (min).
+        Hàm tính toán tuyến đường kết hợp 3 phương tiện: Truck → Train → Ship.
+        Phiên bản tối ưu: Origin → Ga gần origin → Ga gần cảng origin → Cảng origin 
+        → Cảng gần destination → Ga gần cảng destination → Ga gần destination → Destination
+        CHỈ sử dụng đường thẳng cho train và ship, truck dùng route thực tế từ database
         """
         try:
             print("=" * 60)
-            print("Debug: Calculating Truck → Train → Ship route")
+            print("Debug: Calculating OPTIMIZED Truck → Train → Ship route (REAL TRUCK ROUTES)")
 
             def safe_get(obj, *keys, default=None):
-                """
-                    Hàm phụ để lấy giá trị an toàn từ obj (có thể là dict, pandas Series, hoặc object).
-                    Thử lần lượt các key trong danh sách *keys; nếu không tìm thấy key nào thì trả về default.
-                    → Giúp tránh lỗi 'KeyError' hoặc 'AttributeError' khi dữ liệu thiếu hoặc khác định dạng.
-                """
+                """Hàm phụ để lấy giá trị an toàn"""
                 if obj is None:
                     return default
-                # Nếu obj là None thì trả về giá trị mặc định luôn
-                
-                try:
-                    for k in keys:
-                        if isinstance(obj, dict):
-                            # Nếu là dictionary thì kiểm tra trực tiếp theo key
-                            if k in obj:
-                                print(f" - Debug: Found key '{k}' in dict")
-                                return obj[k]
-                        else:
-                            # Nếu có phương thức get() thì thử dùng
-                            if hasattr(obj, 'get') and k in obj:
-                                print(f" - Debug: Found key '{k}' using get()")
-                                return obj.get(k)
-                            # Nếu là object, kiểm tra trong __dict__
-                            if k in getattr(obj, '__dict__', {}):
-                                print(f" - Debug: Found key '{k}' in __dict__")
-                                return getattr(obj, k)
-                            # Thử truy cập theo chỉ mục (như pandas Series)
-                            try:
-                                v = obj[k]
-                                print(f" - Debug: Found key/index '{k}' by indexing")
-                                return v
-                            except Exception:
-                                print(f" - Debug: Key/index '{k}' not found by indexing")
-                                continue
-                except Exception:
-                    pass
+                    
+                for k in keys:
+                    if isinstance(obj, dict):
+                        if k in obj:
+                            return obj[k]
+                    else:
+                        if hasattr(obj, 'get') and k in obj:
+                            return obj.get(k)
+                        if k in getattr(obj, '__dict__', {}):
+                            return getattr(obj, k)
+                        try:
+                            return obj[k]
+                        except Exception:
+                            continue
                 return default
 
-            # 1️⃣ Xác định ga gần điểm xuất phát (origin station)
+            # 1️⃣ TÌM CÁC ĐIỂM TRUNG GIAN TỐI ƯU
+            # Ga gần điểm xuất phát
             origin_station = nearest_stations.get('origin_station')
-            if origin_station is None or getattr(origin_station, "empty", False):
+            if origin_station is None:
                 print("⚠️ No origin station found.")
                 return None
-            # Lấy thông tin mã, tên, toạ độ ga
+            
             origin_station_code = safe_get(origin_station, 'Station_Code', 'station_code', 'code')
             origin_station_name = safe_get(origin_station, 'Station_Name', 'name', default='unknown')
             origin_station_lon = float(safe_get(origin_station, 'lon', 'slon', default=origin_point.x))
             origin_station_lat = float(safe_get(origin_station, 'lat', 'slat', default=origin_point.y))
-            print(f"Debug: Origin station found: {origin_station_name} ({origin_station_code})")
+            print(f"Debug: Origin station: {origin_station_name} ({origin_station_code})")
 
-            # 2️⃣ Xác định cảng gần điểm đến (destination port)
+            # Cảng gần điểm xuất phát (để bắt đầu vận chuyển biển)
+            origin_port = nearest_ports.get('origin_port')
+            if origin_port is None:
+                # Fallback: tìm cảng gần ga xuất phát
+                origin_port = self._find_nearest_ports(Point(origin_station_lon, origin_station_lat).buffer(0.5), 
+                                                    Point(origin_station_lon, origin_station_lat)).get('origin_port')
+            
+            origin_port_code = safe_get(origin_port, 'C02_005', 'C02_001', default=None)
+            origin_port_x = float(safe_get(origin_port, 'X', 'x', default=origin_station_lon))
+            origin_port_y = float(safe_get(origin_port, 'Y', 'y', default=origin_station_lat))
+            print(f"Debug: Origin port: {origin_port_code}")
+
+            # Ga gần cảng xuất phát (nơi hàng từ tàu hỏa chuyển sang cảng)
+            origin_port_station = self._nearest_station(origin_port_x, origin_port_y)
+            if origin_port_station is None:
+                origin_port_station = origin_station  # Fallback
+            
+            origin_port_station_code = safe_get(origin_port_station, 'Station_Code', 'station_code', 'code')
+            origin_port_station_name = safe_get(origin_port_station, 'Station_Name', 'name', default='unknown')
+            origin_port_station_lon = float(safe_get(origin_port_station, 'slon', 'lon', default=origin_port_x))
+            origin_port_station_lat = float(safe_get(origin_port_station, 'slat', 'lat', default=origin_port_y))
+            print(f"Debug: Origin port station: {origin_port_station_name} ({origin_port_station_code})")
+
+            # Cảng gần điểm đích
             dest_port = nearest_ports.get('dest_port')
-            if dest_port is None or getattr(dest_port, "empty", False):
-                print("⚠️ No destination port found.")
-                return None
+            if dest_port is None:
+                dest_port = self._find_nearest_ports(dest_point.buffer(0.5), dest_point).get('dest_port')
+            
             dest_port_code = safe_get(dest_port, 'C02_005', 'C02_001', default=None)
-            dest_port_x = safe_get(dest_port, 'X', 'x', default=None)
-            dest_port_y = safe_get(dest_port, 'Y', 'y', default=None)
-            if dest_port_x is None or dest_port_y is None:
-                print("⚠️ Destination port missing coordinates.")
-                return None
-            # Chuyển sang dạng số thực để tính toán
-            dest_port_x = float(dest_port_x)
-            dest_port_y = float(dest_port_y)
-            print(f"Debug: Destination port found: {dest_port_code}")
+            dest_port_x = float(safe_get(dest_port, 'X', 'x', default=dest_point.x))
+            dest_port_y = float(safe_get(dest_port, 'Y', 'y', default=dest_point.y))
+            print(f"Debug: Destination port: {dest_port_code}")
 
-            # 3️⃣ Tìm ga gần cảng (nơi hàng từ tàu hỏa chuyển sang tàu biển)
-            port_station = self._nearest_station(dest_port_x, dest_port_y)
-            if port_station is None:
-                print("⚠️ No station near port found.")
-                return None
-            # Lấy mã, tên, toạ độ ga gần cảng
-            port_station_code = safe_get(port_station, 'Station_Code', 'station_code', 'code')
-            port_station_name = safe_get(port_station, 'Station_Name', 'name', default='unknown')
-            port_station_slon = float(safe_get(port_station, 'slon', 'lon', default=dest_port_x))
-            port_station_slat = float(safe_get(port_station, 'slat', 'lat', default=dest_port_y))
-            print(f"Debug: Port station found: {port_station_name} ({port_station_code})")
+            # Ga gần cảng đích
+            dest_port_station = self._nearest_station(dest_port_x, dest_port_y)
+            if dest_port_station is None:
+                # Fallback: tìm ga gần điểm đích
+                dest_port_station = nearest_stations.get('dest_station')
+            
+            dest_port_station_code = safe_get(dest_port_station, 'Station_Code', 'station_code', 'code')
+            dest_port_station_name = safe_get(dest_port_station, 'Station_Name', 'name', default='unknown')
+            dest_port_station_lon = float(safe_get(dest_port_station, 'slon', 'lon', default=dest_port_x))
+            dest_port_station_lat = float(safe_get(dest_port_station, 'slat', 'lat', default=dest_port_y))
+            print(f"Debug: Destination port station: {dest_port_station_name} ({dest_port_station_code})")
 
-            # 4️⃣ Xác định cảng đích thật sự (gần điểm đến)
-            print("Debug: Finding real destination port...")
-            nearest_dest_ports = self._find_nearest_ports(dest_point.buffer(0.5), dest_point)
-            dest_port_real = nearest_dest_ports.get('dest_port')
-            if dest_port_real is None or getattr(dest_port_real, "empty", False):
-                dest_port_real = dest_port  # fallback: dùng lại cảng hiện tại
-            dest_port_real_code = safe_get(dest_port_real, 'C02_005', 'C02_001', default=dest_port_code)
-            dest_port_real_x = float(safe_get(dest_port_real, 'X', 'x', default=dest_port_x))
-            dest_port_real_y = float(safe_get(dest_port_real, 'Y', 'y', default=dest_port_y))
-            print(f"Debug: Real destination port found: {dest_port_real_code}")
+            # Ga gần điểm đích (để kết thúc vận chuyển đường bộ)
+            dest_station = nearest_stations.get('dest_station')
+            if dest_station is None:
+                dest_station = dest_port_station  # Fallback
+            
+            dest_station_code = safe_get(dest_station, 'Station_Code', 'station_code', 'code')
+            dest_station_name = safe_get(dest_station, 'Station_Name', 'name', default='unknown')
+            dest_station_lon = float(safe_get(dest_station, 'lon', 'slon', default=dest_point.x))
+            dest_station_lat = float(safe_get(dest_station, 'lat', 'slat', default=dest_point.y))
+            print(f"Debug: Destination station: {dest_station_name} ({dest_station_code})")
 
-            # ---- CHẶNG 1: Truck (Origin → Ga xuất phát) ----
+            # 2️⃣ TÍNH TOÁN CÁC CHẶNG ĐƯỜNG
+
+            # ---- CHẶNG 1: Truck (Origin → Ga gần origin) ----
+            # SỬ DỤNG ROUTE THỰC TẾ TỪ DATABASE
             truck_1 = self._get_truck_route_info(origin_point, Point(origin_station_lon, origin_station_lat))
             if truck_1 is None:
-                # Nếu không tìm được tuyến xe tải từ DB → dùng khoảng cách đường thẳng
-                print("Debug: Đường Thẳng - truck_1 fallback to straight-line")
+                # Fallback: nếu không có route thực tế, dùng đường thẳng
                 d1 = self._calculate_distance(origin_point.y, origin_point.x, origin_station_lat, origin_station_lon)
                 truck_1 = {
                     'distance': d1,
-                    'time': (d1 / 1000) / 60 * 60,  # giả định tốc độ 60 km/h → thời gian phút
+                    'time': (d1 / 1000) / 60 * 60,
                     'geometry': LineString([(origin_point.x, origin_point.y), (origin_station_lon, origin_station_lat)])
                 }
-            print(f"Debug: Truck leg 1 - distance: {truck_1['distance']} m, time: {truck_1['time']} min")
-
-            # ---- CHẶNG 2: Train (Ga xuất phát → Ga gần cảng) ----
-            train_leg = None
-            if origin_station_code and port_station_code:
-                train_leg = self._get_train_route_info(origin_station_code, port_station_code)
-            if not train_leg:
-                # Nếu không có dữ liệu tàu hỏa → tính khoảng cách đường thẳng
-                dist_m = self._calculate_distance(origin_station_lat, origin_station_lon, port_station_slat, port_station_slon)
-                train_time_min = (dist_m / 1000) / 80 * 60  # giả định tốc độ 80 km/h
-                train_leg = {'distance': dist_m, 'time': train_time_min,
-                            'geometry': LineString([(origin_station_lon, origin_station_lat), (port_station_slon, port_station_slat)])}
-                print("Debug: train_leg fallback used")
+                print("Debug: Truck 1 - using straight line fallback")
             else:
-                # Chuẩn hóa đơn vị từ dữ liệu thật (nếu có)
-                train_leg_distance_m = train_leg.get('distance', 0) * 1000 if train_leg.get('distance') is not None else 0
-                train_leg_time_min = train_leg.get('time', 0)
-                train_leg = {'distance': train_leg_distance_m, 'time': train_leg_time_min,
-                            'geometry': LineString([(origin_station_lon, origin_station_lat), (port_station_slon, port_station_slat)])}
-            print(f"Debug: Train leg - distance: {train_leg['distance']} m, time: {train_leg['time']} min")
+                print(f"Debug: Truck 1 - using REAL route from database - distance: {truck_1['distance']} m")
 
-            # ---- CHẶNG 3: Truck (Ga gần cảng → Cảng) ----
-            truck_2 = self._get_truck_route_info(Point(port_station_slon, port_station_slat), Point(dest_port_x, dest_port_y))
+            # ---- CHẶNG 2: Train (Ga gần origin → Ga gần cảng origin) ----
+            # DÙNG ĐƯỜNG THẲNG cho train
+            train_1 = None
+            if origin_station_code and origin_port_station_code:
+                train_1 = self._get_train_route_info(origin_station_code, origin_port_station_code)
+            
+            if not train_1:
+                # Dùng đường thẳng nếu không có dữ liệu train thực tế
+                dist_m = self._calculate_distance(origin_station_lat, origin_station_lon, origin_port_station_lat, origin_port_station_lon)
+                train_time_min = (dist_m / 1000) / 80 * 60  # Giả định tốc độ 80 km/h
+                train_1 = {
+                    'distance': dist_m, 
+                    'time': train_time_min,
+                    'geometry': LineString([(origin_station_lon, origin_station_lat), (origin_port_station_lon, origin_port_station_lat)])
+                }
+                print("Debug: Train 1 - using straight line")
+            else:
+                # Chuẩn hóa dữ liệu train thực tế
+                train_1_distance_m = train_1.get('distance', 0) * 1000 if train_1.get('distance') is not None else 0
+                train_1_time_min = train_1.get('time', 0)
+                train_1 = {
+                    'distance': train_1_distance_m, 
+                    'time': train_1_time_min,
+                    'geometry': LineString([(origin_station_lon, origin_station_lat), (origin_port_station_lon, origin_port_station_lat)])
+                }
+                print(f"Debug: Train 1 - using REAL train data - distance: {train_1['distance']} m")
+
+            # ---- CHẶNG 3: Truck (Ga gần cảng origin → Cảng origin) ----
+            # SỬ DỤNG ROUTE THỰC TẾ TỪ DATABASE
+            truck_2 = self._get_truck_route_info(
+                Point(origin_port_station_lon, origin_port_station_lat), 
+                Point(origin_port_x, origin_port_y)
+            )
             if truck_2 is None:
-                # Nếu DB không có dữ liệu → dùng đường thẳng
-                dist_m = self._calculate_distance(port_station_slat, port_station_slon, dest_port_y, dest_port_x)
+                # Fallback: đường thẳng
+                dist_m = self._calculate_distance(origin_port_station_lat, origin_port_station_lon, origin_port_y, origin_port_x)
                 truck_2 = {
                     'distance': dist_m,
-                    'time': (dist_m / 1000) / 40 * 60,  # giả định tốc độ 40 km/h
-                    'geometry': LineString([(port_station_slon, port_station_slat), (dest_port_x, dest_port_y)])
+                    'time': (dist_m / 1000) / 40 * 60,
+                    'geometry': LineString([(origin_port_station_lon, origin_port_station_lat), (origin_port_x, origin_port_y)])
                 }
-            print(f"Debug: Truck leg 2 - distance: {truck_2['distance']} m, time: {truck_2['time']} min")
-
-            # ---- CHẶNG 4: Ship (Cảng → Cảng đích thật) ----
-            ship_leg = self._get_ship_route_info(dest_port_code, dest_port_real_code) if dest_port_code and dest_port_real_code else None
-            if not ship_leg:
-                # fallback: không có tuyến tàu → dùng khoảng cách đường thẳng
-                ship_dist_m = self._calculate_distance(dest_port_y, dest_port_x, dest_port_real_y, dest_port_real_x)
-                ship_time_min = (ship_dist_m / 1000) / 30 * 60  # giả định tốc độ 30 km/h
-                ship_leg = {'distance': ship_dist_m, 'time': ship_time_min,
-                            'geometry': LineString([(dest_port_x, dest_port_y), (dest_port_real_x, dest_port_real_y)])}
-                print("Debug: ship_leg fallback used")
+                print("Debug: Truck 2 - using straight line fallback")
             else:
-                # Chuẩn hoá dữ liệu từ kết quả thật
+                print(f"Debug: Truck 2 - using REAL route from database - distance: {truck_2['distance']} m")
+
+            # ---- CHẶNG 4: Ship (Cảng origin → Cảng destination) ----
+            # DÙNG ĐƯỜNG THẲNG cho ship
+            ship_leg = self._get_ship_route_info(origin_port_code, dest_port_code) if origin_port_code and dest_port_code else None
+            if not ship_leg:
+                # Dùng đường thẳng nếu không có dữ liệu ship thực tế
+                ship_dist_m = self._calculate_distance(origin_port_y, origin_port_x, dest_port_y, dest_port_x)
+                ship_time_min = (ship_dist_m / 1000) / 30 * 60  # Giả định tốc độ 30 km/h
+                ship_leg = {
+                    'distance': ship_dist_m, 
+                    'time': ship_time_min,
+                    'geometry': LineString([(origin_port_x, origin_port_y), (dest_port_x, dest_port_y)])
+                }
+                print("Debug: Ship - using straight line")
+            else:
+                # Chuẩn hóa dữ liệu ship thực tế
                 ship_time = ship_leg.get('time', 0)
                 ship_distance = ship_leg.get('distance', 0)
-                ship_leg = {'distance': ship_distance, 'time': ship_time * 60 if ship_time < 1000 else ship_time, 
-                            'geometry': LineString([(dest_port_x, dest_port_y), (dest_port_real_x, dest_port_real_y)])}
-            print(f"Debug: Ship leg - distance: {ship_leg['distance']} m, time: {ship_leg['time']} min")
+                ship_leg = {
+                    'distance': ship_distance, 
+                    'time': ship_time * 60 if ship_time < 1000 else ship_time,  # Chuyển đổi đơn vị thời gian
+                    'geometry': LineString([(origin_port_x, origin_port_y), (dest_port_x, dest_port_y)])
+                }
+                print(f"Debug: Ship - using REAL ship data - distance: {ship_leg['distance']} m")
 
-            # ---- CHẶNG 5: Truck (Cảng đích thật → Điểm đến cuối cùng) ----
-            truck_3 = self._get_truck_route_info(Point(dest_port_real_x, dest_port_real_y), dest_point)
+            # ---- CHẶNG 5: Truck (Cảng destination → Ga gần cảng destination) ----
+            # SỬ DỤNG ROUTE THỰC TẾ TỪ DATABASE
+            truck_3 = self._get_truck_route_info(
+                Point(dest_port_x, dest_port_y), 
+                Point(dest_port_station_lon, dest_port_station_lat)
+            )
             if truck_3 is None:
-                # fallback: không có đường trong DB → tính theo khoảng cách đường thẳng
-                dist_m = self._calculate_distance(dest_port_real_y, dest_port_real_x, dest_point.y, dest_point.x)
+                # Fallback: đường thẳng
+                dist_m = self._calculate_distance(dest_port_y, dest_port_x, dest_port_station_lat, dest_port_station_lon)
                 truck_3 = {
                     'distance': dist_m,
-                    'time': (dist_m / 1000) / 60 * 60,  # giả định tốc độ 60 km/h
-                    'geometry': LineString([(dest_port_real_x, dest_port_real_y), (dest_point.x, dest_point.y)])
+                    'time': (dist_m / 1000) / 40 * 60,
+                    'geometry': LineString([(dest_port_x, dest_port_y), (dest_port_station_lon, dest_port_station_lat)])
                 }
-            print(f"Debug: Truck leg 3 - distance: {truck_3['distance']} m, time: {truck_3['time']} min")
+                print("Debug: Truck 3 - using straight line fallback")
+            else:
+                print(f"Debug: Truck 3 - using REAL route from database - distance: {truck_3['distance']} m")
 
-            # ---- Tổng hợp toàn tuyến ----
-            total_distance = (truck_1['distance'] + train_leg['distance'] + truck_2['distance'] + ship_leg['distance'] + truck_3['distance'])
-            total_time = (truck_1['time'] + train_leg['time'] + truck_2['time'] + ship_leg['time'] + truck_3['time'])
+            # ---- CHẶNG 6: Train (Ga gần cảng destination → Ga gần destination) ----
+            # DÙNG ĐƯỜNG THẲNG cho train
+            train_2 = None
+            if dest_port_station_code and dest_station_code:
+                train_2 = self._get_train_route_info(dest_port_station_code, dest_station_code)
+            
+            if not train_2:
+                # Dùng đường thẳng nếu không có dữ liệu train thực tế
+                dist_m = self._calculate_distance(dest_port_station_lat, dest_port_station_lon, dest_station_lat, dest_station_lon)
+                train_time_min = (dist_m / 1000) / 80 * 60  # Giả định tốc độ 80 km/h
+                train_2 = {
+                    'distance': dist_m, 
+                    'time': train_time_min,
+                    'geometry': LineString([(dest_port_station_lon, dest_port_station_lat), (dest_station_lon, dest_station_lat)])
+                }
+                print("Debug: Train 2 - using straight line")
+            else:
+                # Chuẩn hóa dữ liệu train thực tế
+                train_2_distance_m = train_2.get('distance', 0) * 1000 if train_2.get('distance') is not None else 0
+                train_2_time_min = train_2.get('time', 0)
+                train_2 = {
+                    'distance': train_2_distance_m, 
+                    'time': train_2_time_min,
+                    'geometry': LineString([(dest_port_station_lon, dest_port_station_lat), (dest_station_lon, dest_station_lat)])
+                }
+                print(f"Debug: Train 2 - using REAL train data - distance: {train_2['distance']} m")
 
-            # Tính tổng lượng phát thải CO₂ cho từng phương tiện
+            # ---- CHẶNG 7: Truck (Ga gần destination → Destination) ----
+            # SỬ DỤNG ROUTE THỰC TẾ TỪ DATABASE
+            truck_4 = self._get_truck_route_info(
+                Point(dest_station_lon, dest_station_lat), 
+                dest_point
+            )
+            if truck_4 is None:
+                # Fallback: đường thẳng
+                dist_m = self._calculate_distance(dest_station_lat, dest_station_lon, dest_point.y, dest_point.x)
+                truck_4 = {
+                    'distance': dist_m,
+                    'time': (dist_m / 1000) / 60 * 60,
+                    'geometry': LineString([(dest_station_lon, dest_station_lat), (dest_point.x, dest_point.y)])
+                }
+                print("Debug: Truck 4 - using straight line fallback")
+            else:
+                print(f"Debug: Truck 4 - using REAL route from database - distance: {truck_4['distance']} m")
+
+            # 3️⃣ TỔNG HỢP KẾT QUẢ
+
+            total_distance = (
+                truck_1['distance'] + train_1['distance'] + truck_2['distance'] + 
+                ship_leg['distance'] + truck_3['distance'] + train_2['distance'] + truck_4['distance']
+            )
+            
+            total_time = (
+                truck_1['time'] + train_1['time'] + truck_2['time'] + 
+                ship_leg['time'] + truck_3['time'] + train_2['time'] + truck_4['time']
+            )
+
+            # Tính CO2 emissions
             co2 = (
-                self._calculate_co2_emissions('truck', weight_tons, (truck_1['distance'] + truck_2['distance'] + truck_3['distance'])/1000) +
-                self._calculate_co2_emissions('train', weight_tons, train_leg['distance']/1000) +
+                self._calculate_co2_emissions('truck', weight_tons, 
+                    (truck_1['distance'] + truck_2['distance'] + truck_3['distance'] + truck_4['distance'])/1000) +
+                self._calculate_co2_emissions('train', weight_tons, 
+                    (train_1['distance'] + train_2['distance'])/1000) +
                 self._calculate_co2_emissions('ship', weight_tons, ship_leg['distance']/1000)
             )
 
-            # Gom tất cả các đoạn đường thành một tuyến duy nhất
+            # Kết hợp geometry - QUAN TRỌNG: Giữ nguyên geometry thực tế từ database cho truck routes
             segments = []
-            for leg in (truck_1, train_leg, truck_2, ship_leg, truck_3):
+            for leg in (truck_1, train_1, truck_2, ship_leg, truck_3, train_2, truck_4):
                 geom = leg.get('geometry')
-                if geom is None:
-                    continue
-                if isinstance(geom, LineString):
+                if geom is not None:
                     segments.append(geom)
-                else:
-                    try:
-                        from shapely.geometry import shape
-                        segments.append(shape(geom))
-                    except Exception:
-                        continue
-
-            # Kết hợp các hình học lại thành một tuyến hoàn chỉnh
-            full_geometry = self._combine_geometries(segments)
-            print("Debug: Combined full geometry created.")
             
-            # Tạo danh sách các điểm quan trọng trên tuyến đường
+            full_geometry = self._combine_geometries(segments)
+
+            # Điểm quan trọng trên tuyến
             points = [
-                {"type": "truck_start", "name": "Origin", "lat": origin_point.y, "lon": origin_point.x},
-                {"type": "station_origin", "name": origin_station_name, "lat": origin_station_lat, "lon": origin_station_lon},
-                {"type": "station_transfer", "name": port_station_name, "lat": port_station_slat, "lon": port_station_slon},
-                {"type": "port_origin", "name": dest_port_code, "lat": dest_port_y, "lon": dest_port_x},
-                {"type": "port_dest", "name": dest_port_real_code, "lat": dest_port_real_y, "lon": dest_port_real_x},
+                {"type": "origin", "name": "Origin", "lat": origin_point.y, "lon": origin_point.x},
+                {"type": "origin_station", "name": origin_station_name, "lat": origin_station_lat, "lon": origin_station_lon},
+                {"type": "port_station", "name": origin_port_station_name, "lat": origin_port_station_lat, "lon": origin_port_station_lon},
+                {"type": "origin_port", "name": origin_port_code, "lat": origin_port_y, "lon": origin_port_x},
+                {"type": "dest_port", "name": dest_port_code, "lat": dest_port_y, "lon": dest_port_x},
+                {"type": "dest_port_station", "name": dest_port_station_name, "lat": dest_port_station_lat, "lon": dest_port_station_lon},
+                {"type": "dest_station", "name": dest_station_name, "lat": dest_station_lat, "lon": dest_station_lon},
                 {"type": "destination", "name": "Destination", "lat": dest_point.y, "lon": dest_point.x},
             ]
-            print("Debug: Important points on route created.")
+
+            print("Successfully calculated optimized Truck → Train → Ship route with REAL truck routes.")
             
-            # Trả về kết quả cuối cùng
             return {
                 'mode': 'truck_train_ship',
-                'name': 'Truck → Train → Ship',
+                'name': 'Truck → Train → Ship (Optimized)',
                 'total_time_minutes': total_time,
                 'total_distance_meters': total_distance,
                 'total_distance_km': total_distance / 1000,
                 'co2_emissions_grams': co2,
                 'origin_station': origin_station_name,
-                'transfer_station': port_station_name,
-                'origin_port': dest_port_code,
-                'dest_port': dest_port_real_code,
-                'train_time_minutes': train_leg['time'],
-                'ship_time_hours': ship_leg['time'] / 60.0 if ship_leg['time'] is not None else 0,
-                'truck_time_minutes': truck_1['time'] + truck_2['time'] + truck_3['time'],
-                'truck_distance_km': (truck_1['distance'] + truck_2['distance'] + truck_3['distance']) / 1000,
+                'origin_port': origin_port_code,
+                'dest_port': dest_port_code,
+                'dest_station': dest_station_name,
+                'train_time_minutes': train_1['time'] + train_2['time'],
+                'ship_time_hours': ship_leg['time'] / 60.0,
+                'truck_time_minutes': truck_1['time'] + truck_2['time'] + truck_3['time'] + truck_4['time'],
+                'truck_distance_km': (truck_1['distance'] + truck_2['distance'] + truck_3['distance'] + truck_4['distance']) / 1000,
                 'geometry': full_geometry,
                 'points': points,
             }
 
         except Exception as e:
             import traceback
-            print(f"Error calculating truck_train_ship route: {e}")
+            print(f"Error calculating optimized truck_train_ship route: {e}")
             traceback.print_exc()
             return None
-
         
     def _find_optimal_routes(self, routes: List[Dict]) -> Dict:
         """Find optimal routes by different criteria"""
