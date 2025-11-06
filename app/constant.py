@@ -34,6 +34,6 @@ Steps:
 """
 Run command:
 
-python find_route.py 37.8161 139.0196 36.0520 138.0443 --data-folder "C:\rikai\source_code\pgrouting_api\importer_data" --mode "truck_train_ship_train" --output "test"
+python find_route.py 35.3616 139.0225 31.513 130.527 --data-folder "C:\rikai\source_code\pgrouting_api\importer_data" --mode "truck_train_ship_train" --output "test_2" --show-all
 
 """
