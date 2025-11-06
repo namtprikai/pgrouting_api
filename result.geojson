@@ -7,47 +7,55 @@
         "type": "LineString",
         "coordinates": [
           [
-            142.6816,
-            43.3472
+            142.6404,
+            44.1157
           ],
           [
-            142.39149734240362,
-            43.34717499531167
+            142.46561170974113,
+            44.349291325113896
           ],
           [
-            141.01434519794944,
-            38.27658218287389
+            141.021108683156,
+            43.1838660246781
           ],
           [
-            141.09087231,
-            38.32253852
+            141.01861111,
+            43.20027778
           ],
           [
-            141.09087231,
-            38.32253852
+            138.51083029,
+            35.02519562
           ],
           [
-            140.3112,
-            38.4535
+            138.42165636579637,
+            34.98855525166834
+          ],
+          [
+            137.9694154287975,
+            36.21063885961501
+          ],
+          [
+            138.0282,
+            36.1764
           ]
         ]
       },
       "properties": {
         "mode": "truck_train_ship",
-        "total_time_minutes": 532.7871871536335,
-        "total_distance_meters": 676519.663192727,
-        "total_distance_km": 676.519663192727,
-        "co2_emissions_grams": 158669.57721690653,
-        "origin_port": "仙台塩釜港",
-        "dest_port": "仙台塩釜港",
-        "origin_station": "富良野",
-        "dest_station": "",
+        "total_time_minutes": 2149.7098798362217,
+        "total_distance_meters": 1295625.4995124985,
+        "total_distance_km": 1295.6254995124984,
+        "co2_emissions_grams": 176615.21430933836,
+        "origin_port": "小樽港",
+        "dest_port": "清水港",
+        "origin_station": "名寄オフレールステーション",
+        "dest_station": "南松本",
         "transfer_port": "",
-        "transfer_station": "仙台港",
-        "ship_time_hours": 0.0,
-        "train_time_minutes": 431.19742811728077,
-        "truck_time_minutes": 101.58975903635269,
-        "truck_distance_km": 101.58975903635269
+        "transfer_station": "",
+        "ship_time_hours": 31.10030347676964,
+        "train_time_minutes": 236.7741719380977,
+        "truck_time_minutes": 46.91749929194588,
+        "truck_distance_km": 46.91749929194588
       }
     },
     {
@@ -55,12 +63,12 @@
       "geometry": {
         "type": "Point",
         "coordinates": [
-          142.6816,
-          43.3472
+          142.6404,
+          44.1157
         ]
       },
       "properties": {
-        "point_type": "truck_start",
+        "point_type": "origin",
         "name": "Origin"
       }
     },
@@ -69,13 +77,13 @@
       "geometry": {
         "type": "Point",
         "coordinates": [
-          142.39149734240362,
-          43.34717499531167
+          142.46561170974113,
+          44.349291325113896
         ]
       },
       "properties": {
-        "point_type": "station_origin",
-        "name": "富良野"
+        "point_type": "origin_station",
+        "name": "名寄オフレールステーション"
       }
     },
     {
@@ -83,13 +91,13 @@
       "geometry": {
         "type": "Point",
         "coordinates": [
-          141.01434519794944,
-          38.27658218287389
+          141.021108683156,
+          43.1838660246781
         ]
       },
       "properties": {
-        "point_type": "station_transfer",
-        "name": "仙台港"
+        "point_type": "port_station",
+        "name": "小樽築港オフレールステーション"
       }
     },
     {
@@ -97,13 +105,13 @@
       "geometry": {
         "type": "Point",
         "coordinates": [
-          141.09087231,
-          38.32253852
+          141.01861111,
+          43.20027778
         ]
       },
       "properties": {
-        "point_type": "port_origin",
-        "name": "仙台塩釜港"
+        "point_type": "origin_port",
+        "name": "小樽港"
       }
     },
     {
@@ -111,13 +119,13 @@
       "geometry": {
         "type": "Point",
         "coordinates": [
-          141.09087231,
-          38.32253852
+          138.51083029,
+          35.02519562
         ]
       },
       "properties": {
-        "point_type": "port_dest",
-        "name": "仙台塩釜港"
+        "point_type": "dest_port",
+        "name": "清水港"
       }
     },
     {
@@ -125,8 +133,36 @@
       "geometry": {
         "type": "Point",
         "coordinates": [
-          140.3112,
-          38.4535
+          138.42165636579637,
+          34.98855525166834
+        ]
+      },
+      "properties": {
+        "point_type": "dest_port_station",
+        "name": "静岡貨物"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          137.9694154287975,
+          36.21063885961501
+        ]
+      },
+      "properties": {
+        "point_type": "dest_station",
+        "name": "南松本"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "Point",
+        "coordinates": [
+          138.0282,
+          36.1764
         ]
       },
       "properties": {
@@ -137,66 +173,78 @@
   ],
   "properties": {
     "origin": {
-      "lat": 43.3472,
-      "lon": 142.6816
+      "lat": 44.1157,
+      "lon": 142.6404
     },
     "destination": {
-      "lat": 38.4535,
-      "lon": 140.3112
+      "lat": 36.1764,
+      "lon": 138.0282
     },
     "weight_tons": 0,
     "optimal_routes": {
       "fastest": {
         "mode": "truck_train_ship",
-        "name": "Truck → Train → Ship",
-        "total_time_minutes": 532.7871871536335,
-        "total_distance_meters": 676519.663192727,
-        "total_distance_km": 676.519663192727,
-        "co2_emissions_grams": 158669.57721690653,
-        "origin_station": "富良野",
-        "transfer_station": "仙台港",
-        "origin_port": "仙台塩釜港",
-        "dest_port": "仙台塩釜港",
-        "train_time_minutes": 431.19742811728077,
-        "ship_time_hours": 0.0,
-        "truck_time_minutes": 101.58975903635269,
-        "truck_distance_km": 101.58975903635269,
+        "name": "Truck → Train → Ship (Optimized)",
+        "total_time_minutes": 2149.7098798362217,
+        "total_distance_meters": 1295625.4995124985,
+        "total_distance_km": 1295.6254995124984,
+        "co2_emissions_grams": 176615.21430933836,
+        "origin_station": "名寄オフレールステーション",
+        "origin_port": "小樽港",
+        "dest_port": "清水港",
+        "dest_station": "南松本",
+        "train_time_minutes": 236.7741719380977,
+        "ship_time_hours": 31.10030347676964,
+        "truck_time_minutes": 46.91749929194588,
+        "truck_distance_km": 46.91749929194588,
         "points": [
           {
-            "type": "truck_start",
+            "type": "origin",
             "name": "Origin",
-            "lat": 43.3472,
-            "lon": 142.6816
+            "lat": 44.1157,
+            "lon": 142.6404
           },
           {
-            "type": "station_origin",
-            "name": "富良野",
-            "lat": 43.34717499531167,
-            "lon": 142.39149734240362
+            "type": "origin_station",
+            "name": "名寄オフレールステーション",
+            "lat": 44.349291325113896,
+            "lon": 142.46561170974113
           },
           {
-            "type": "station_transfer",
-            "name": "仙台港",
-            "lat": 38.27658218287389,
-            "lon": 141.01434519794944
+            "type": "port_station",
+            "name": "小樽築港オフレールステーション",
+            "lat": 43.1838660246781,
+            "lon": 141.021108683156
           },
           {
-            "type": "port_origin",
-            "name": "仙台塩釜港",
-            "lat": 38.32253852,
-            "lon": 141.09087231
+            "type": "origin_port",
+            "name": "小樽港",
+            "lat": 43.20027778,
+            "lon": 141.01861111
           },
           {
-            "type": "port_dest",
-            "name": "仙台塩釜港",
-            "lat": 38.32253852,
-            "lon": 141.09087231
+            "type": "dest_port",
+            "name": "清水港",
+            "lat": 35.02519562,
+            "lon": 138.51083029
+          },
+          {
+            "type": "dest_port_station",
+            "name": "静岡貨物",
+            "lat": 34.98855525166834,
+            "lon": 138.42165636579637
+          },
+          {
+            "type": "dest_station",
+            "name": "南松本",
+            "lat": 36.21063885961501,
+            "lon": 137.9694154287975
           },
           {
             "type": "destination",
             "name": "Destination",
-            "lat": 38.4535,
-            "lon": 140.3112
+            "lat": 36.1764,
+            "lon": 138.0282
           }
         ]
       }
