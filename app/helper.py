@@ -9,7 +9,6 @@ def _is_num(x):
 
 
 def _clean_points(coords):
-    """Trả về list[(x,y)] chỉ gồm số thực hợp lệ, bỏ phần tử sai/NaN."""
     out = []
     for p in coords:
         if (
@@ -23,10 +22,6 @@ def _clean_points(coords):
 
 
 def _flatten_if_singleton_segments(coords):
-    """
-    Nếu coords là [[[x,y],...]] (1 segment MultiLineString) -> [[x,y],...]
-    Lặp tối đa 2 lần để bỏ lồng thừa.
-    """
     for _ in range(2):
         if (
             isinstance(coords, (list, tuple))
@@ -42,10 +37,6 @@ def _flatten_if_singleton_segments(coords):
 
 
 def extract_linestring(geom):
-    """
-    Chuẩn hoá geom về Shapely LineString (có thể rỗng nếu không đủ điểm).
-    Hỗ trợ: Shapely LineString/MultiLineString, GeoJSON dict, list toạ độ.
-    """
     # 1) Shapely
     if isinstance(geom, LineString):
         return geom
@@ -191,6 +182,7 @@ def build_result_segment(
     geometry,
     total_distance_meters: float,
     data_infos: dict,
+    mode: str
 ):
     # km từ meters (an toàn, không crash nếu None)
     total_distance_km = (
@@ -220,7 +212,7 @@ def build_result_segment(
 
     # Kết quả cuối: giữ nguyên logic bạn đang có
     return {
-        "mode": "truck_ship_train",
+        "mode": mode,
         "segment_index": idx,
         "total_segments": merged_count,
         "is_continuous": (merged_count == 1),

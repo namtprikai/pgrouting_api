@@ -584,25 +584,20 @@ class RouteOptimizer:
                 stD_dest_geometry,
             ]
             combined_routes = self._combine_linestrings(
-                listLineStrings, total_distances, data_infos
+                mode, listLineStrings, total_distances, data_infos
             )
             routes.extend(combined_routes)
 
-        # Route 4: Truck + Train + Ship + Train
-        if mode in ["all", "truck_train_ship_train"]:
-            # BASIC FLOW:
-            # Origin --- <truck_route_1> --- stO_1 --- <train_route_1> --- stD_1 --- <truck_route_2> --- origin_port --- <ship_route> --- dest_port --- <truck_route_3> --- stO_2 --- <train_route_2> --- stD_2 --- <truck_route_4> --- Destination
-
+        # Route 5: Truck + Train + Ship + Train
+        if mode == "truck_train_ship_train":
             # FIND IMPORTANT POINTS
             # 3. Find origin port
             origin_port = nearest_ports["origin_port"]
             origin_port_point = Point(origin_port["X"], origin_port["Y"])
             # 1. Find FIRST origin train station
-            # nearest_ports = ...
             nearest_stations_1 = self._find_nearest_stations(
                 origin_point, origin_port_point
             )
-            nearest_stations_2 = ...
 
             stO_1 = nearest_stations_1["origin_station"]
 
@@ -617,15 +612,6 @@ class RouteOptimizer:
 
             # 6. Find SECOND destination train station
             stD_2 = self._nearest_station(dest_point.x, dest_point.y)
-
-            print("ORIGIN STATION 1: ", stO_1)
-            print("DEST STATION 1: ", stD_1)
-
-            print("ORIGIN STATION 2: ", stO_2)
-            print("DEST STATION 2: ", stD_2)
-
-            print("ORIGIN PORT: ", origin_port)
-            print("DEST PORT: ", dest_port)
 
             # CALCULATING ROUTES
             # 1. Get the truck path from the Origin to stO_1, geometry, distance & CO2 emissions
@@ -899,10 +885,10 @@ class RouteOptimizer:
             ]
 
             data_infos = build_data_infos(
-                origin_port=origin_port,
-                dest_port=dest_port,
-                origin_stations=[stO_1, stO_2],  # hoặc chỉ [stO_1] nếu có 1
-                dest_stations=[stD_1, stD_2],  # hoặc chỉ [stD_1]
+                origin_port=origin_port["C02_005"],
+                dest_port=dest_port["C02_005"],
+                origin_stations=stO_1["name"] + ", "+ stO_2["name"],
+                dest_stations=stD_1["name"] + ", "+ stD_2["name"],
                 emissions=emissions,
                 ship_time=0,
                 train_time_minutes=0,
@@ -920,20 +906,247 @@ class RouteOptimizer:
                 train_route_2_geometry,
             ]
 
-            print("-----------------!!!!!!!------------------")
-            print("TRUCK ROUTE 1 GEOMETRY: ", truck_route_1_geometry)
-            print("TRUCK ROUTE 2 GEOMETRY: ", truck_route_2_geometry)
-            print("TRUCK ROUTE 3 GEOMETRY: ", truck_route_3_geometry)
-            print("TRUCK ROUTE 4 GEOMETRY: ", truck_route_4_geometry)
-            print("TRAIN ROUTE 1 GEOMETRY: ", train_route_1_geometry)
-            print("TRAIN ROUTE 2 GEOMETRY: ", train_route_2_geometry)
-            print("SHIP ROUTE GEOMETRY: ", ship_route_geometry)
-            # linestring_to_geojson_feature(
-            #     ship_route_geometry, props={"name": "SHIP_ROUTE"}
-            # )
-            print("------------------------------------------")
             combined_routes = self._combine_linestrings(
-                listLineStrings, total_distances, data_infos
+                mode, listLineStrings, total_distances, data_infos
+            )
+
+            routes.extend(combined_routes)
+
+        # Route 6: Truck + Train + Ship
+        if mode == "truck_train_ship":
+            # FIND IMPORTANT POINTS
+            # 3. Find origin port
+            origin_port = nearest_ports["origin_port"]
+            origin_port_point = Point(origin_port["X"], origin_port["Y"])
+            # 1. Find FIRST origin train station
+            nearest_stations_1 = self._find_nearest_stations(
+                origin_point, origin_port_point
+            )
+
+            stO_1 = nearest_stations_1["origin_station"]
+
+            # 2. Find FIRST destination train station
+            stD_1 = nearest_stations_1["dest_station"]
+
+            # 4. Find dest port
+            dest_port = nearest_ports["dest_port"]
+
+            # CALCULATING ROUTES
+            # 1. Get the truck path from the Origin to stO_1, geometry, distance & CO2 emissions
+            truck_route_1 = self._get_truck_routes_to_stations(
+                origin_point, dest_point, nearest_stations
+            )
+            if truck_route_1:
+                print("Debug: Found truck_route_1")
+
+                origin_to_station = truck_route_1.get("origin_to_station", None)
+                geom_in = origin_to_station.get("geometry", None)
+
+                truck_route_1_geometry = extract_linestring(geom_in)
+                truck_route_1_distance = truck_route_1["origin_to_station"]["distance"]
+            else:
+                print("Debug: Not found truck_route_1, initializing fallback route")
+                stO_1_point = Point(stO_1["lon"], stO_1["lat"])
+                truck_route_1_geometry = LineString(origin_point, stO_1_point)
+                truck_route_1_distance = self._calculate_distance(
+                    origin_point.y, origin_point.x, stO_1["lat"], stO_1["lon"]
+                )
+
+            truck_route_1_emissions = self._calculate_co2_emissions(
+                "truck", weight_tons, truck_route_1_distance / 1000
+            )
+
+            # 2. Get the train path from stO_1 to stD_1, geometry, distance & CO2 emissions
+            train_route_1 = self._find_train_routes_between_stations(
+                nearest_stations_1, weight_tons, max_transfers, show_all
+            )
+            train_route_1_geometry = LineString(
+                [
+                    (float(stO_1["lon"]), float(stO_1["lat"])),
+                    (float(stD_1["lon"]), float(stD_1["lat"])),
+                ]
+            )
+            train_route_1_distance = self._calculate_distance(
+                stO_1["lat"], stO_1["lon"], stD_1["lat"], stD_1["lon"]
+            )
+
+            if isinstance(train_route_1, (list, LineString)) and train_route_1:
+                first = train_route_1[0]
+
+                if isinstance(first, dict):
+                    ri = first.get("route_info") or {}
+                    train_route_1_distance = ri.get("distance")
+                    geom = ri.get("geometry")
+
+                    if geom:
+                        print(
+                            "Debug: Initializing new value for train_route_1_geometry"
+                        )
+                        train_route_1_geometry = geom
+
+            train_route_1_emissions = self._calculate_co2_emissions(
+                "train", weight_tons, train_route_1_distance / 1000
+            )
+
+            # 3. Get the truck path from stD_1 to origin_port, geometry, distance & CO2 emissions
+            stD_1_point = Point(float(stD_1["lon"]), float(stD_1["lat"]))
+            truck_route_2 = self._get_truck_routes_to_ports(
+                stD_1_point, dest_point, nearest_ports
+            )
+
+            if truck_route_2:
+                print("Debug: Found truck_route_2")
+                truck_route_2_distance = truck_route_2["origin_to_port"]["distance"]
+                isLineString = isinstance(
+                    truck_route_2["origin_to_port"]["geometry"], LineString
+                )
+
+                if truck_route_2["origin_to_port"]["geometry"] and isLineString:
+                    truck_route_2_geometry = truck_route_2["origin_to_port"]["geometry"]
+                else:
+                    truck_route_2_geometry = truck_route_2["origin_to_port"][
+                        "geometry"
+                    ]["coordinates"]
+
+            else:
+                print("Debug: NOT found truck_route_2")
+                truck_route_2_geometry = LineString(stD_1_point, origin_port_point)
+                truck_route_2_distance = self._calculate_distance(
+                    stD_1["lat"], stD_1["lon"], dest_port["Y"], dest_port["X"]
+                )
+
+            truck_route_2_emissions = self._calculate_co2_emissions(
+                "truck", weight_tons, truck_route_2_distance / 1000
+            )
+
+            # 4. Get the ship path form origin_port to dest_port
+            ship_route = self._find_ship_routes_between_ports(
+                nearest_ports, weight_tons, max_transfers, show_all
+            )
+            
+            # Find ship route geometry
+            if isinstance(ship_route, list) and len(ship_route) > 0:
+                if isinstance(ship_route[0], dict) and "geometry" in ship_route[0]:
+                    print("Debug: Found geometry for ship_route")
+                    ship_route_geometry = ship_route[0]["geometry"]
+                else:
+                    ship_route_geometry = ship_route[0]
+
+            elif not ship_route:
+                print(
+                    "Debug: Not found geometry in ship_route, initializing straight line from origin port to destination"
+                )
+                origin_port_point = (
+                    float(origin_port["X"]),
+                    float(origin_port["Y"]),
+                )
+                dest_port_point = (float(dest_port["X"]), float(dest_port["Y"]))
+                ship_route_geometry = LineString([origin_port_point, dest_port_point])
+
+            else:
+                print("Debug: Default fallback for ship_route_geometry is ship_route")
+                ship_route_geometry = ship_route
+
+            # Find ship_route_distance
+            ship_route_distance = None
+            item = (
+                ship_route[0]
+                if isinstance(ship_route, list) and ship_route
+                else ship_route
+            )
+            if isinstance(item, dict):
+                ri = item.get("route_info")
+                if isinstance(ri, dict):
+                    d = ri.get("distance")
+                    if d is not None:
+                        try:
+                            ship_route_distance = float(d)
+                        except:
+                            pass
+
+            if ship_route_distance is None:
+                ship_route_distance = self._calculate_distance(
+                    float(origin_port["Y"]),
+                    float(origin_port["X"]),
+                    float(dest_port["Y"]),
+                    float(dest_port["X"]),
+                )
+
+            ship_route_emissions = self._calculate_co2_emissions(
+                "ship", weight_tons, ship_route_distance / 1000
+            )
+            
+            # 5. Get the truck path from dest_port to Destination
+            truck_route_3 = self._route_truck_mm(
+                float(dest_port["X"]), float(dest_port["Y"]), dest_point.x, dest_point.y
+            )
+
+            if truck_route_3:
+                truck_route_3_geometry = LineString(
+                    truck_route_3["geometry"]["coordinates"]
+                )
+                truck_route_3_distance = truck_route_3["distance_km"]
+            else:
+                stD_2_point = Point(float(stD_2["slon"]), float(stD_2["slat"]))
+                truck_route_3_geometry = LineString([stD_2_point, dest_point])
+                truck_route_3_distance = self._calculate_distance(
+                    float(stD_2["slat"]),
+                    float(stD_2["slon"]),
+                    dest_point.y,
+                    dest_point.x,
+                )
+
+            truck_route_3_emissions = self._calculate_co2_emissions(
+                "truck", weight_tons, truck_route_3_distance / 1000
+            )
+
+            # 8. Sum up
+            total_distances = self._calc_total_distance(
+                [
+                    truck_route_1_distance,
+                    truck_route_2_distance,
+                    truck_route_3_distance,
+                    train_route_1_distance,
+                    ship_route_distance,
+                ]
+            )
+
+            emissions = [
+                truck_route_1_emissions,
+                truck_route_2_emissions,
+                truck_route_3_emissions,
+                train_route_1_emissions,
+                ship_route_emissions,
+            ]
+
+            truck_distances_km = [
+                truck_route_1_distance,
+                truck_route_2_distance,
+                truck_route_3_distance,
+            ]
+
+            data_infos = build_data_infos(
+                origin_port=origin_port["C02_005"],
+                dest_port=dest_port["C02_005"],
+                origin_stations=stO_1["name"],
+                dest_stations=stD_1["name"],
+                emissions=emissions,
+                ship_time=0,
+                train_time_minutes=0,
+                truck_time_minutes=0,
+                truck_distances_km=truck_distances_km,
+            )
+
+            listLineStrings = [
+                truck_route_1_geometry,
+                truck_route_2_geometry,
+                truck_route_3_geometry,
+                ship_route_geometry,
+                train_route_1_geometry,
+            ]
+
+            combined_routes = self._combine_linestrings(
+                mode, listLineStrings, total_distances, data_infos
             )
 
             routes.extend(combined_routes)
@@ -946,6 +1159,7 @@ class RouteOptimizer:
 
     def _combine_linestrings(
         self,
+        mode,
         linestrings,
         total_distances,
         data_infos,
@@ -961,7 +1175,6 @@ class RouteOptimizer:
 
         segments = []
         indx = 0
-        print("=" * 100, "\n", linestrings, "\n", "=" * 100)
         for part in linestrings:
             if part is None:
                 continue
@@ -969,14 +1182,11 @@ class RouteOptimizer:
             coords = None
 
             if isinstance(part, str):
-                print("processing part number by instance: ", indx)
                 try:
                     geom = wkt.loads(part)
                     if geom.geom_type == "LineString":
-                        print("processed part number by ls: ", indx)
                         coords = list(geom.coords)
                     elif geom.geom_type == "MultiLineString":
-                        print("processed part number by mls: ", indx)
                         for line in geom.geoms:
                             segment_coords = list(line.coords)
                             normalized = self._normalize_coords(
@@ -1068,9 +1278,8 @@ class RouteOptimizer:
 
             geometry = LineString(segment)
 
-            if geometry.length == 0:  # bỏ đoạn suy biến (hai điểm trùng)
+            if geometry.length == 0:
                 continue
-            # print("geometry ", idx, geometry)
 
             total_distance_m = 0.0
             for a, b in zip(segment, segment[1:]):
@@ -1085,6 +1294,7 @@ class RouteOptimizer:
                     geometry=geometry,
                     total_distance_meters=int(round(total_distance_m)),
                     data_infos=data_infos,
+                    mode=mode,
                 )
             )
             print("appended part: ", idx)
