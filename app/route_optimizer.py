@@ -392,6 +392,8 @@ class RouteOptimizer:
                         nearest_ports, weight_tons, max_transfers, show_all
                     )
 
+                    print(ship_routes,'ship_routes')
+
                     if ship_routes:
                         # Step 3: Combine truck routes + ship routes
                         combined_routes = self._combine_truck_ship_routes(
@@ -464,29 +466,12 @@ class RouteOptimizer:
                 nearest_ports, weight_tons, max_transfers, show_all
             )
 
-            ptO_ptD_distance = 10000
-            if isinstance(ptO_ptD_routes, str):
-                ptO_ptD_geometry = ptO_ptD_routes
-            elif isinstance(ptO_ptD_routes, list) and len(ptO_ptD_routes) > 0:
-                if (
-                    isinstance(ptO_ptD_routes[0], dict)
-                    and "geometry" in ptO_ptD_routes[0]
-                ):
-                    ptO_ptD_geometry = ptO_ptD_routes[0]["geometry"]
-                else:
-                    ptO_ptD_geometry = ptO_ptD_routes[0]
-            elif not ptO_ptD_routes:
-                origin_port_point = (float(origin_port["X"]), float(origin_port["Y"]))
-                dest_port_point = (float(dest_port["X"]), float(dest_port["Y"]))
-                ptO_ptD_geometry = LineString([origin_port_point, dest_port_point])
-                ptO_ptD_distance = self._calculate_distance(
-                    float(origin_port["Y"]),
-                    float(origin_port["X"]),
-                    float(dest_port["Y"]),
-                    float(dest_port["X"]),
-                )
+            if (ptO_ptD_routes and ptO_ptD_routes[0]['transfer_ports']):
+                ptO_ptD_geometry = self._create_ship_coords(origin_port, dest_port, ptO_ptD_routes[0]['transfer_ports'])
             else:
-                ptO_ptD_geometry = ptO_ptD_routes
+                ptO_ptD_geometry = self._create_ship_coords(origin_port, dest_port, [])
+
+            ptO_ptD_distance = ptO_ptD_routes[0]['route_info']['distance']
 
             ptO_ptD_co2_emissions = self._calculate_co2_emissions(
                 "ship", weight_tons, ptO_ptD_distance / 1000
@@ -555,8 +540,6 @@ class RouteOptimizer:
                     stD_dest_distance,
                 ]
             )
-
-            print(origin_port, "origin_port")
 
             data_infos = {
                 "origin_port": origin_port["C02_005"],
@@ -705,29 +688,11 @@ class RouteOptimizer:
             ship_route = self._find_ship_routes_between_ports(
                 nearest_ports, weight_tons, max_transfers, show_all
             )
-            
-            # Find ship route geometry
-            if isinstance(ship_route, list) and len(ship_route) > 0:
-                if isinstance(ship_route[0], dict) and "geometry" in ship_route[0]:
-                    print("Debug: Found geometry for ship_route")
-                    ship_route_geometry = ship_route[0]["geometry"]
-                else:
-                    ship_route_geometry = ship_route[0]
 
-            elif not ship_route:
-                print(
-                    "Debug: Not found geometry in ship_route, initializing straight line from origin port to destination"
-                )
-                origin_port_point = (
-                    float(origin_port["X"]),
-                    float(origin_port["Y"]),
-                )
-                dest_port_point = (float(dest_port["X"]), float(dest_port["Y"]))
-                ship_route_geometry = LineString([origin_port_point, dest_port_point])
-
+            if (ship_route and ship_route[0]['transfer_ports']):
+                ship_route_geometry = self._create_ship_coords(origin_port, dest_port, ship_route[0]['transfer_ports'])
             else:
-                print("Debug: Default fallback for ship_route_geometry is ship_route")
-                ship_route_geometry = ship_route
+                ship_route_geometry = self._create_ship_coords(origin_port, dest_port, [])
 
             # Find ship_route_distance
             ship_route_distance = None
@@ -1024,28 +989,10 @@ class RouteOptimizer:
                 nearest_ports, weight_tons, max_transfers, show_all
             )
             
-            # Find ship route geometry
-            if isinstance(ship_route, list) and len(ship_route) > 0:
-                if isinstance(ship_route[0], dict) and "geometry" in ship_route[0]:
-                    print("Debug: Found geometry for ship_route")
-                    ship_route_geometry = ship_route[0]["geometry"]
-                else:
-                    ship_route_geometry = ship_route[0]
-
-            elif not ship_route:
-                print(
-                    "Debug: Not found geometry in ship_route, initializing straight line from origin port to destination"
-                )
-                origin_port_point = (
-                    float(origin_port["X"]),
-                    float(origin_port["Y"]),
-                )
-                dest_port_point = (float(dest_port["X"]), float(dest_port["Y"]))
-                ship_route_geometry = LineString([origin_port_point, dest_port_point])
-
+            if (ship_route and ship_route[0]['transfer_ports']):
+                ship_route_geometry = self._create_ship_coords(origin_port, dest_port, ship_route[0]['transfer_ports'])
             else:
-                print("Debug: Default fallback for ship_route_geometry is ship_route")
-                ship_route_geometry = ship_route
+                ship_route_geometry = self._create_ship_coords(origin_port, dest_port, [])
 
             # Find ship_route_distance
             ship_route_distance = None
@@ -2100,7 +2047,7 @@ class RouteOptimizer:
                     )
                     if route:
                         combined_routes.append(route)
-
+            print(combined_routes, 'combined_routes')
             return combined_routes
 
         except Exception as e:
@@ -2133,12 +2080,15 @@ class RouteOptimizer:
 
             # Find transfer ports
             transfer_ports = set(from_origin) & set(to_dest)
-
+            print(transfer_ports, 'transfer_port')
             routes = []
             for transfer_port in list(transfer_ports)[:max_transfers]:
                 # Find ship routes via transfer
                 leg1 = self._get_ship_route_info(origin_port["C02_005"], transfer_port)
                 leg2 = self._get_ship_route_info(transfer_port, dest_port["C02_005"])
+
+                print(leg1, 'leg1')
+                print(leg2, 'leg2')
 
                 if leg1 and leg2:
                     # Calculate total information
@@ -2320,6 +2270,36 @@ class RouteOptimizer:
             print(f"Error creating combined ship geometry: {e}")
             # Fallback to simple straight line
             return LineString([(0, 0), (0, 0), (0, 0), (0, 0)])
+    
+    def _create_ship_coords(self, origin_port, dest_port, transfer_ports):
+        # Create ship segment
+        if transfer_ports:
+            # Ship route via transfer - need to find coordinates of transfer port
+            ship_coords = [(origin_port["X"], origin_port["Y"])]
+
+            # Add coordinates of transfer ports
+            for transfer_port in transfer_ports:
+                # Find coordinates of transfer port
+                transfer_port_info = self.minato_gdf[
+                    self.minato_gdf["C02_005"] == transfer_port
+                ]
+                if not transfer_port_info.empty:
+                    transfer_coords = (
+                        transfer_port_info["X"].iloc[0],
+                        transfer_port_info["Y"].iloc[0],
+                    )
+                    ship_coords.append(transfer_coords)
+
+            # Add final destination
+            ship_coords.append((dest_port["X"], dest_port["Y"]))
+            print(ship_coords, 'ship coord')
+            return ship_coords
+        else:
+            # Direct ship route
+            return [
+                (origin_port["X"], origin_port["Y"]),
+                (dest_port["X"], dest_port["Y"]),
+            ]
 
     def _get_geometry_coords(self, geometry) -> List[Tuple[float, float]]:
         """Get coordinates from geometry (handles both Shapely and GeoJSON)"""

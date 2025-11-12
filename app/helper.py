@@ -249,5 +249,3 @@ def linestring_to_geojson_feature(geom, props=None, precision=6):
     print("---------------------------------------------------------", "\n")
     return feature
 
-
-# Ví dụ dùng với biến của bạn:
