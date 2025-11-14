@@ -104,7 +104,7 @@ Usage examples:
         # Database configuration (optional)
         db_config = {
             "host": "localhost",
-            "port": 5434,
+            "port": 5432,
             "database": "pgrouting",
             "user": "postgres",
             "password": "pgrouting",

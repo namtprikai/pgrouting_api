@@ -19,8 +19,8 @@ RUN if [ -f /etc/apt/sources.list.d/pgdg.list ]; then \
     fi
 
 # Dữ liệu và cấu hình
-COPY importer_data/japan_highways.osm.bz2 /japan_highways.osm.bz2
-COPY importer_data/chubu-highways.osm.bz2 /chubu-highways.osm.bz2
+COPY importer_data/japan-251109.osm.bz2 /japan-251109.osm.bz2
+COPY importer_data/japan-251109.osm.pbf /japan-251109.osm.pbf
 COPY importer_data/mapconfig.xml /mapconfig.xml
 COPY data_file/L013101物流拠点出発地到着地リスト.csv data_file/L013101物流拠点出発地到着地リスト.csv
 COPY data_file/貨物船_位置情報（国土数値情報）.csv data_file/貨物船_位置情報（国土数値情報）.csv

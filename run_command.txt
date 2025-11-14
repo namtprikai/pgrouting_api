@@ -1,1 +1,1 @@
-python find_route.py 34.889 138.288 36.56 136.596 --data-folder "C:\rikai\source_code\pgrouting_api\importer_data" --mode "truck_train_ship_train" --output "test"
+_get_truck_route_info_db

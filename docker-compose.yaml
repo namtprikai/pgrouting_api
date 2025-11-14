@@ -10,7 +10,7 @@ services:
       - db_data:/var/lib/postgresql/data
       - ./db_init:/scripts
     ports:
-      - 5434:5432
+      - 5432:5432
     restart: unless-stopped
 
   pgrouting_api:

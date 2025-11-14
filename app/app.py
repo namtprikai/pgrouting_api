@@ -1,30 +1,19 @@
-import json
-import os
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import psycopg2
 import psycopg2.pool
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, confloat, conint
+from fastapi import FastAPI
+from pydantic import BaseModel, confloat
 from pydantic_settings import BaseSettings
-from shapely import LineString
-import geopandas as gpd
 from route_optimizer import RouteOptimizer
 
 from constant import *
 
-# =========================
 # 環境変数
-# =========================
 class Settings(BaseSettings):
-    # PGHOST: str = os.getenv("PGHOST")
-    # PGPORT: int = os.getenv("PGPORT")
-    # PGDATABASE: str = os.getenv("PGDATABASE")
-    # PGUSER: str = os.getenv("PGUSER")
-    # PGPASSWORD: str = os.getenv("PGPASSWORD")
 
     PGHOST: str = "localhost"
-    PGPORT: int = 5434
+    PGPORT: int = 5432
     PGDATABASE: str = "pgrouting"
     PGUSER: str = "postgres"
     PGPASSWORD: str = "pgrouting"
@@ -48,9 +37,7 @@ class Settings(BaseSettings):
 settings = Settings()
 monitoring = False
 
-# =========================
 # DB プール
-# =========================
 POOL: psycopg2.pool.SimpleConnectionPool = psycopg2.pool.SimpleConnectionPool(
     minconn=1,
     maxconn=10,
@@ -69,7 +56,6 @@ def sql_one(query: str, params: Tuple[Any, ...]) -> Optional[Dict[str, Any]]:
             row = cur.fetchone()
             if not row:
                 return None
-            # psycopg2 の場合は列名を得る
             cols = [desc.name for desc in cur.description]
             return {c: v for c, v in zip(cols, row)}
     finally:
@@ -92,9 +78,7 @@ def sql_all(query: str, params: Tuple[Any, ...]) -> Optional[Dict[str, Any]]:
     finally:
         POOL.putconn(conn)
 
-# =========================
 # 入出力スキーマ
-# =========================
 class MultimodalBody(BaseModel):
     origin_name: str
     origin_lat: confloat(ge=-90, le=90)

@@ -3,11 +3,13 @@ from shapely.ops import linemerge
 import math
 import json
 
+from decoratorr import timeit
 
+@timeit("is_num")
 def _is_num(x):
     return isinstance(x, (int, float)) and math.isfinite(x)
 
-
+@timeit("_clean_points")
 def _clean_points(coords):
     out = []
     for p in coords:
@@ -20,7 +22,7 @@ def _clean_points(coords):
             out.append((float(p[0]), float(p[1])))
     return out
 
-
+@timeit("_flatten_if_singleton_segments")
 def _flatten_if_singleton_segments(coords):
     for _ in range(2):
         if (
@@ -35,7 +37,7 @@ def _flatten_if_singleton_segments(coords):
             break
     return coords
 
-
+@timeit("extract_linestring")
 def extract_linestring(geom):
     # 1) Shapely
     if isinstance(geom, LineString):
@@ -85,7 +87,7 @@ def extract_linestring(geom):
         return LineString(pts)
     return LineString()
 
-
+@timeit("_nz")
 def _nz(x):
     """None/NaN/inf -> 0.0"""
     try:
@@ -94,7 +96,7 @@ def _nz(x):
     except Exception:
         return 0.0
 
-
+@timeit("_get_name")
 def _get_name(x):
     """Lấy tên station an toàn: dict['name'] | string | repr."""
     if isinstance(x, dict):
@@ -103,7 +105,7 @@ def _get_name(x):
         return str(x)
     return str(x)
 
-
+@timeit("_label_stations")
 def _label_stations(prefix, stations):
     """
     stations: list/tuple các object station (dict có 'name', hoặc string).
@@ -117,7 +119,7 @@ def _label_stations(prefix, stations):
         return {f"{prefix}_station": _get_name(stations[0])}
     return {f"{prefix}_station_{i}": _get_name(s) for i, s in enumerate(stations, 1)}
 
-
+@timeit("build_data_infos")
 def build_data_infos(
     origin_port,
     dest_port,
@@ -175,7 +177,7 @@ def build_data_infos(
     )
     return data
 
-
+@timeit("build_result_segment")
 def build_result_segment(
     idx: int,
     merged_count: int,
@@ -225,7 +227,7 @@ def build_result_segment(
         **station_fields,  # trộn động các trạm
     }
 
-
+@timeit("linestring_to_geojson_feature")
 def linestring_to_geojson_feature(geom, props=None, precision=6):
     """geom: shapely.geometry.LineString (EPSG:4326)
     props: dict properties (optional)"""
@@ -248,6 +250,3 @@ def linestring_to_geojson_feature(geom, props=None, precision=6):
     print(json.dumps(feature, ensure_ascii=False))
     print("---------------------------------------------------------", "\n")
     return feature
-
-
-# Ví dụ dùng với biến của bạn:

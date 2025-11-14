@@ -5,7 +5,7 @@ Optimizes multimodal transportation routes (truck, train, ship)
 
 import geopandas as gpd
 import pandas as pd
-from shapely.geometry import Point, LineString
+from shapely.geometry import Point, LineString, mapping
 from datetime import timedelta
 import pyproj
 from typing import Dict, List, Optional, Tuple
@@ -13,10 +13,13 @@ import numpy as np
 import json
 from shapely import wkt
 import math
+import heapq
+from shapely.ops import linemerge
+
+
 from helper import (
     build_data_infos,
     build_result_segment,
-    linestring_to_geojson_feature,
     extract_linestring,
 )
 
@@ -28,12 +31,14 @@ try:
 except ImportError:
     PSYCOPG2_AVAILABLE = False
 
+from decoratorr import timeit
 
 class RouteOptimizer:
     """
     Class for optimizing multimodal transportation routes
     """
 
+    @timeit("Init RouteOptimizer")
     def __init__(self, data_folder_path: str, db_config: Optional[Dict] = None):
         """
         Initialize RouteOptimizer
@@ -48,7 +53,7 @@ class RouteOptimizer:
         if db_config is None:
             db_config = {
                 "host": "localhost",
-                "port": 5434,
+                "port": 5432,
                 "database": "pgrouting",
                 "user": "postgres",
                 "password": "pgrouting",
@@ -74,7 +79,12 @@ class RouteOptimizer:
 
         # Load all data
         self._load_all_data()
+        
+        # Cache for nearest nodes
+        self._node_cache = {}
+        self._route_cache = {}
 
+    @timeit("Init Database")
     def _load_all_data(self):
         """Load all required data"""
         print("Loading data...")
@@ -99,6 +109,7 @@ class RouteOptimizer:
 
         print("Data loading completed!")
 
+    @timeit("Load OD Data")
     def _load_od_data(self):
         """Load origin-destination data"""
         path = f"{self.data_folder_path}/L013101物流拠点出発地到着地リスト.csv"
@@ -110,6 +121,7 @@ class RouteOptimizer:
         )
         self.odlist_gdf.set_crs(epsg=4326, inplace=True)
 
+    @timeit("Load Port Data")
     def _load_port_data(self):
         """Load port data"""
         minato = pd.read_csv(
@@ -122,14 +134,16 @@ class RouteOptimizer:
         self.minato_gdf.set_crs(epsg=4326, inplace=True)
         self.minato_gdf["C02_005"] = self.minato_gdf["C02_005"] + "港"
 
+    @timeit("Load Station Data")
     def _load_station_data(self):
         """Load freight station data"""
-        station = pd.read_excel(f"{self.data_folder_path}/貨物駅_位置情報.xlsx")
+        station = pd.read_csv(f"{self.data_folder_path}/貨物駅_位置情報.csv")
         self.station_gdf = gpd.GeoDataFrame(
             station, geometry=gpd.points_from_xy(station["lon"], station["lat"])
         )
         self.station_gdf.set_crs(epsg=4326, inplace=True)
 
+    @timeit("Load Ferry Schedule")
     def _load_ferry_schedule(self):
         """Load ferry schedule"""
         self.ferry_time = pd.read_csv(
@@ -153,9 +167,10 @@ class RouteOptimizer:
             self.minato_gdf["C02_005"].isin(self.port_list)
         ]
 
+    @timeit("Load Train Schedule")
     def _load_train_schedule(self):
         """Load train schedule"""
-        self.train_time = pd.read_excel(f"{self.data_folder_path}/貨物駅_時刻表.xlsx")
+        self.train_time = pd.read_csv(f"{self.data_folder_path}/貨物駅_時刻表.csv")
 
         # Replace arrival date
         self.train_time["Arrival_Date"] = self.train_time["Arrival_Date"].replace(
@@ -202,12 +217,14 @@ class RouteOptimizer:
         # Remove duplicates
         self.train_time = self.train_time.drop_duplicates(subset=["train_od"])
 
+    @timeit("Load Truck Route Data")
     def _load_truck_route_data(self):
         """Load truck route data"""
         self.track_route = gpd.read_file(
             f"{self.data_folder_path}/_NITAS自動車経路探索結果データ.gpkg"
         )
 
+    @timeit("Find Route")
     def find_route(
         self,
         origin_lat: float,
@@ -286,6 +303,7 @@ class RouteOptimizer:
             "optimal_routes": optimal_routes,
         }
 
+    @timeit("Find Nearest Ports")
     def _find_nearest_ports(self, origin_point: Point, dest_point: Point) -> Dict:
         """Find nearest ports to origin and destination points"""
         # Create temporary GeoDataFrame for origin and destination
@@ -318,6 +336,7 @@ class RouteOptimizer:
             "dest_port": dest_ports.iloc[0] if not dest_ports.empty else None,
         }
 
+    @timeit("Find Nearest Stations")
     def _find_nearest_stations(self, origin_point: Point, dest_point: Point) -> Dict:
         """Find nearest stations to origin and destination points"""
         # Create temporary GeoDataFrame for origin and destination
@@ -352,9 +371,11 @@ class RouteOptimizer:
             "dest_station": dest_stations.iloc[0] if not dest_stations.empty else None,
         }
 
+    @timeit("Nearest Station DB Query")
     def _nearest_station(self, lon: float, lat: float):
         return self._db_query_one("SELECT * FROM nearest_station(%s, %s)", (lon, lat))
 
+    @timeit("Calculate Routes by Mode")
     def _calculate_routes_by_mode(
         self,
         origin_point: Point,
@@ -1391,9 +1412,11 @@ class RouteOptimizer:
         # print("=" * 100, "\n", routes[0]["geometry"], "\n", "=" * 100)
         return routes
 
+    @timeit("Calculate total distance")
     def _calc_total_distance(self, list_distances):
         return sum(list_distances)
 
+    @timeit("Combine LineStrings")
     def _combine_linestrings(
         self,
         mode,
@@ -1538,6 +1561,7 @@ class RouteOptimizer:
 
         return results if results else None
 
+    @timeit("Normalize coordinates")
     def _normalize_coords(self, coords, transformer, target_crs):
         normalized = []
 
@@ -1567,6 +1591,7 @@ class RouteOptimizer:
 
         return normalized if len(normalized) >= 2 else None
 
+    @timeit("Calculate truck route")
     def _calculate_truck_route(
         self, origin_point: Point, dest_point: Point, weight_tons: float
     ) -> Optional[Dict]:
@@ -1607,6 +1632,7 @@ class RouteOptimizer:
 
         return None
 
+    @timeit("Calculate ship route")
     def _calculate_ship_route(
         self,
         origin_point: Point,
@@ -1752,6 +1778,7 @@ class RouteOptimizer:
 
         return None
 
+    @timeit("Calculate train route")
     def _calculate_train_route(
         self,
         origin_point: Point,
@@ -1908,6 +1935,7 @@ class RouteOptimizer:
 
         return None
 
+    @timeit("Truck Routes to Stations")
     def _get_truck_routes_to_stations(
         self, origin_point: Point, dest_point: Point, nearest_stations: Dict
     ) -> Optional[Dict]:
@@ -1937,6 +1965,7 @@ class RouteOptimizer:
             print(f"Error getting truck routes to stations: {e}")
             return None
 
+    @timeit("Train Routes between Stations")
     def _find_train_routes_between_stations(
         self,
         nearest_stations: Dict,
@@ -1973,6 +2002,7 @@ class RouteOptimizer:
             print(f"Error finding train routes between stations: {e}")
             return []
 
+    @timeit("Combine Truck and Train Routes")
     def _combine_truck_train_routes(
         self,
         truck_routes: Dict,
@@ -2018,6 +2048,7 @@ class RouteOptimizer:
             print(f"Error combining truck train routes: {e}")
             return []
 
+    @timeit("Find Train Transfer Routes")
     def _find_train_transfer_routes(
         self, origin_station: Dict, dest_station: Dict, max_transfers: int
     ) -> List[Dict]:
@@ -2070,6 +2101,7 @@ class RouteOptimizer:
             print(f"Error finding train transfer routes: {e}")
             return []
 
+    @timeit("Create Combined Route")
     def _create_combined_route(
         self,
         truck_routes: Dict,
@@ -2158,6 +2190,7 @@ class RouteOptimizer:
             print(f"Error creating combined route: {e}")
             return None
 
+    @timeit("Create Combined Geometry")
     def _create_combined_geometry(
         self,
         origin_to_station: Dict,
@@ -2238,6 +2271,7 @@ class RouteOptimizer:
             # Fallback to simple straight line
             return LineString([(0, 0), (0, 0), (0, 0), (0, 0)])
 
+    @timeit("Truck Routes to Ports")
     def _get_truck_routes_to_ports(
         self, origin_point: Point, dest_point: Point, nearest_ports: Dict
     ) -> Optional[Dict]:
@@ -2267,6 +2301,7 @@ class RouteOptimizer:
             print(f"Error getting truck routes to ports: {e}")
             return None
 
+    @timeit("Ship Routes between Ports")
     def _find_ship_routes_between_ports(
         self,
         nearest_ports: Dict,
@@ -2299,6 +2334,7 @@ class RouteOptimizer:
             print(f"Error finding ship routes between ports: {e}")
             return []
 
+    @timeit("Combine Truck and Ship Routes")
     def _combine_truck_ship_routes(
         self,
         truck_routes: Dict,
@@ -2344,6 +2380,7 @@ class RouteOptimizer:
             print(f"Error combining truck ship routes: {e}")
             return []
 
+    @timeit("Find Ship Transfer Routes")
     def _find_ship_transfer_routes(
         self, origin_port: Dict, dest_port: Dict, max_transfers: int
     ) -> List[Dict]:
@@ -2399,6 +2436,7 @@ class RouteOptimizer:
             print(f"Error finding ship transfer routes: {e}")
             return []
 
+    @timeit("Create Combined Ship Route")
     def _create_combined_ship_route(
         self,
         truck_routes: Dict,
@@ -2478,6 +2516,7 @@ class RouteOptimizer:
             print(f"Error creating combined ship route: {e}")
             return None
 
+    @timeit("Create Combined Ship Geometry")
     def _create_combined_ship_geometry(
         self,
         origin_to_port: Dict,
@@ -2558,6 +2597,7 @@ class RouteOptimizer:
             # Fallback to simple straight line
             return LineString([(0, 0), (0, 0), (0, 0), (0, 0)])
 
+    @timeit("Get Geometry Coordinates")
     def _get_geometry_coords(self, geometry) -> List[Tuple[float, float]]:
         """Get coordinates from geometry (handles both Shapely and GeoJSON)"""
         if isinstance(geometry, dict):
@@ -2597,6 +2637,7 @@ class RouteOptimizer:
                 return all_coords
         return []
 
+    @timeit("Get Truck Route Info")
     def _get_truck_route_info(
         self, start_point: Point, end_point: Point
     ) -> Optional[Dict]:
@@ -2631,6 +2672,7 @@ class RouteOptimizer:
             "geometry": LineString([start_point, end_point]),
         }
 
+    @timeit("Get Ship Route Info")
     def _get_ship_route_info(self, origin_port: str, dest_port: str) -> Optional[Dict]:
         """Get ship route information"""
         route = self.ferry_time[
@@ -2668,6 +2710,7 @@ class RouteOptimizer:
 
         return None
 
+    @timeit("Get Train Route Info")
     def _get_train_route_info(
         self, origin_station_code: str, dest_station_code: str
     ) -> Optional[Dict]:
@@ -2695,6 +2738,7 @@ class RouteOptimizer:
 
         return None
 
+    @timeit("Calculate Distance")
     def _calculate_distance(
         self, lat1: float, lon1: float, lat2: float, lon2: float
     ) -> float:
@@ -2703,6 +2747,7 @@ class RouteOptimizer:
         _, _, distance = geod.inv(lon1, lat1, lon2, lat2)
         return distance
 
+    @timeit("Calculate CO2 Emissions")
     def _calculate_co2_emissions(
         self, mode: str, weight_tons: float, distance_km: float
     ) -> float:
@@ -2711,6 +2756,7 @@ class RouteOptimizer:
             return weight_tons * distance_km * self.co2_factors[mode]
         return 0
 
+    @timeit("Find Optimal Routes")
     def _find_optimal_routes(self, routes: List[Dict]) -> Dict:
         """Find optimal routes by different criteria"""
         if not routes:
@@ -2736,6 +2782,7 @@ class RouteOptimizer:
             "greenest": create_route_summary(min_co2_route),
         }
 
+    @timeit("Save Results")
     def save_results(self, results: Dict, output_path: str):
         """Save results to GeoJSON file"""
         # Convert results to GeoJSON format
@@ -2744,6 +2791,7 @@ class RouteOptimizer:
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(geojson_data, f, ensure_ascii=False, indent=2)
 
+    @timeit("Convert to GeoJSON")
     def _convert_to_geojson(self, results: Dict) -> Dict:
         """Convert results to GeoJSON format"""
         from shapely import wkt
@@ -2918,6 +2966,7 @@ class RouteOptimizer:
 
         return geojson
 
+    @timeit("Find Ship Routes with Transfer")
     def _find_ship_routes_with_transfer(
         self,
         origin_point: Point,
@@ -3017,6 +3066,7 @@ class RouteOptimizer:
 
         return routes
 
+    @timeit("Calculate Ship Route with Transfer")
     def _calculate_ship_route_with_transfer(
         self,
         origin_point: Point,
@@ -3102,6 +3152,7 @@ class RouteOptimizer:
 
         return None
 
+    @timeit("Find Train Routes with Transfer")
     def _find_train_routes_with_transfer(
         self,
         origin_point: Point,
@@ -3188,6 +3239,7 @@ class RouteOptimizer:
 
         return routes
 
+    @timeit("Calculate Train Route with Transfer")
     def _calculate_train_route_with_transfer(
         self,
         origin_point: Point,
@@ -3280,6 +3332,7 @@ class RouteOptimizer:
 
         return None
 
+    @timeit("Get Train Route Info")
     def _get_train_route_info(
         self, origin_station_code: int, dest_station_code: int
     ) -> Optional[Dict]:
@@ -3312,6 +3365,7 @@ class RouteOptimizer:
 
         return None
 
+    @timeit("Find Single Ship Route with Transfer")
     def _find_single_ship_route_with_transfer(
         self,
         origin_point: Point,
@@ -3348,6 +3402,7 @@ class RouteOptimizer:
             print(f"Error finding single ship route with transfer: {e}")
             return None
 
+    @timeit("Find Single Train Route with Transfer")
     def _find_single_train_route_with_transfer(
         self,
         origin_point: Point,
@@ -3384,6 +3439,7 @@ class RouteOptimizer:
             print(f"Error finding single train route with transfer: {e}")
             return None
 
+    @timeit("Initialize Database")
     def _init_database(self):
         """Initialize database connection pool"""
         if not PSYCOPG2_AVAILABLE:
@@ -3416,6 +3472,7 @@ class RouteOptimizer:
             print("Truck routes will use fallback method")
             self.db_pool = None
 
+    @timeit("Database Query One")
     def _db_query_one(self, query: str, params: tuple) -> Optional[Dict]:
         """Execute a single query and return one result"""
         if not self.db_pool:
@@ -3436,6 +3493,7 @@ class RouteOptimizer:
         finally:
             self.db_pool.putconn(conn)
 
+    @timeit("Database Query All 3489 ")
     def _db_query_all(self, query: str, params: tuple) -> Optional[List[Dict]]:
         """Execute a query and return all results"""
         if not self.db_pool:
@@ -3459,17 +3517,26 @@ class RouteOptimizer:
         finally:
             self.db_pool.putconn(conn)
 
+    @timeit("Find Nearest Node ID")
     def _nearest_node_id(self, lon: float, lat: float) -> Optional[Dict]:
-        """Find nearest node ID from database"""
-        return self._db_query_one("SELECT * FROM nearest_node_id(%s, %s)", (lon, lat))
+        cache_key = (round(lon, 6), round(lat, 6))
+        if cache_key in self._node_cache:
+            return self._node_cache[cache_key]
+        
+        result = self._db_query_one("SELECT * FROM nearest_node_id(%s, %s)", (lon, lat))
+        self._node_cache[cache_key] = result
+        return result
 
+    @timeit("Get Node Component")
     def _get_node_component(
         self, start_node: int, end_node: int
     ) -> Optional[List[Dict]]:
-        """Get node components to check connectivity"""
-        sql = "SELECT * FROM pgr_connectedComponents('SELECT gid AS id, source, target, cost_s as cost, reverse_cost FROM jpn_ways') WHERE node IN (%s, %s)"
+        """Get node components to check connectivity using precomputed table"""
+        sql = "SELECT component FROM jpn_components WHERE node IN (%s, %s)"
         return self._db_query_all(sql, (start_node, end_node))
 
+    # 5s -> 6s : cached dc 1 cai, giam dc 5s, gốc, chậm tại vì dùng function
+    @timeit("Route Truck MM")
     def _route_truck_mm(
         self,
         o_lon: float,
@@ -3478,21 +3545,36 @@ class RouteOptimizer:
         d_lat: float,
         toll_per_km: float = 30.0,
     ) -> Optional[Dict]:
-        """Get truck route from database using route_truck_mm function - copied from app.py"""
+        """Get truck route from database using route_truck_mm function - cached"""
+
+        # Tạo cache key từ các tham số đầu vào
+        cache_key = (
+            round(o_lon, 6),
+            round(o_lat, 6),
+            round(d_lon, 6),
+            round(d_lat, 6),
+            round(toll_per_km, 2),
+        )
+
+        # Nếu đã có trong cache thì trả về luôn
+        if cache_key in self._route_cache:
+            return self._route_cache[cache_key]
+
+        # hàm slq
         result = self._db_query_one(
             """
             SELECT geom_geojson, distance_km, travel_time_h, motorway_km, toll_estimate_yen,
-                   entry_ic_name, entry_ic_lon, entry_ic_lat,
-                   exit_ic_name,  exit_ic_lon,  exit_ic_lat
+                entry_ic_name, entry_ic_lon, entry_ic_lat,
+                exit_ic_name,  exit_ic_lon,  exit_ic_lat
             FROM route_truck_mm(%s, %s, %s, %s, %s)
             """,
             (o_lon, o_lat, d_lon, d_lat, toll_per_km),
         )
-
+        
         if not result or not result.get("geom_geojson"):
             return None
 
-        return {
+        route = {
             "geometry": json.loads(result["geom_geojson"]),
             "distance_km": float(result["distance_km"]),
             "travel_time_h": float(result["travel_time_h"]),
@@ -3522,6 +3604,466 @@ class RouteOptimizer:
             ),
         }
 
+        self._route_cache[cache_key] = route
+        return route
+    
+    # 1 nhanh hơn nhưng rối
+    # @timeit("Route Truck MM")
+    # def _route_truck_mm(
+    #     self,
+    #     o_lon: float,
+    #     o_lat: float,
+    #     d_lon: float,
+    #     d_lat: float,
+    #     toll_per_km: float = 30.0,
+    # ) -> Optional[Dict]:
+    #     """Get truck route using DB tables + Python Dijkstra/A*, cached."""
+
+    #     # 1. Cache key
+    #     cache_key = (
+    #         round(o_lon, 6),
+    #         round(o_lat, 6),
+    #         round(d_lon, 6),
+    #         round(d_lat, 6),
+    #         round(toll_per_km, 2),
+    #     )
+    #     if cache_key in self._route_cache:
+    #         return self._route_cache[cache_key]
+
+    #     # 2. Nearest nodes
+    #     row = self._db_query_one(
+    #         "SELECT nid FROM jpn_nodes ORDER BY geom <-> ST_SetSRID(ST_MakePoint(%s,%s),4326) LIMIT 1",
+    #         (o_lon, o_lat),
+    #     )
+    #     if not row:
+    #         return None
+    #     src_node = row["nid"]
+
+    #     row = self._db_query_one(
+    #         "SELECT nid FROM jpn_nodes ORDER BY geom <-> ST_SetSRID(ST_MakePoint(%s,%s),4326) LIMIT 1",
+    #         (d_lon, d_lat),
+    #     )
+    #     if not row:
+    #         return None
+    #     dst_node = row["nid"]
+
+    #     # 3. Get ways within bounding box + small buffer
+    #     min_lon, max_lon = min(o_lon, d_lon), max(o_lon, d_lon)
+    #     min_lat, max_lat = min(o_lat, d_lat), max(o_lat, d_lat)
+
+    #     ways = self._db_query_all(
+    #         """
+    #         SELECT gid, source, target, cost_s, reverse_cost, length_m, maxspeed_forward, highway,
+    #             ST_AsText(geom) AS geom_wkt
+    #         FROM jpn_ways
+    #         WHERE NOT blocked
+    #         AND geom && ST_Expand(ST_MakeEnvelope(%s,%s,%s,%s,4326), 0.05)
+    #         """,
+    #         (min_lon, min_lat, max_lon, max_lat),
+    #     )
+    #     if not ways:
+    #         return None
+
+    #     # 4. Build adjacency list
+    #     adj: Dict[int, List[Tuple[int, float, int, str]]] = {}
+    #     edge_geom: Dict[int, LineString] = {}
+    #     edge_highway: Dict[int, str] = {}
+    #     edge_length: Dict[int, float] = {}
+
+    #     for w in ways:
+    #         try:
+    #             geom = wkt.loads(w["geom_wkt"])
+    #         except:
+    #             continue  # skip invalid WKT
+    #         edge_geom[w["gid"]] = geom
+    #         edge_highway[w["gid"]] = w["highway"]
+    #         edge_length[w["gid"]] = w["length_m"]
+
+    #         adj.setdefault(w["source"], []).append((w["target"], w["cost_s"], w["gid"], w["highway"]))
+    #         if w["reverse_cost"] < 1e15:
+    #             adj.setdefault(w["target"], []).append((w["source"], w["reverse_cost"], w["gid"], w["highway"]))
+
+    #     # 5. Dijkstra
+    #     heap = [(0, src_node, [])]  # (cost, node, path_edges)
+    #     visited = {}
+    #     path_edges: List[int] = []
+
+    #     while heap:
+    #         cost, node, path = heapq.heappop(heap)
+    #         if node in visited:
+    #             continue
+    #         visited[node] = cost
+    #         path_edges = path
+    #         if node == dst_node:
+    #             break
+    #         for neigh, c, gid, hw in adj.get(node, []):
+    #             if neigh not in visited:
+    #                 heapq.heappush(heap, (cost + c, neigh, path + [gid]))
+
+    #     if not path_edges:
+    #         return None
+
+    #     # 6. Aggregate geometry
+    #     geom_lines = [edge_geom[gid] for gid in path_edges]
+    #     full_line = LineString([pt for line in geom_lines for pt in line.coords])
+    #     geom_geojson = mapping(full_line)
+
+    #     # 7. Distance, travel_time, motorway_km
+    #     distance_km = sum(edge_length[gid] for gid in path_edges) / 1000
+    #     travel_time_h = 0
+    #     motorway_km = 0
+    #     gid_to_w = {w["gid"]: w for w in ways}
+
+    #     for gid in path_edges:
+    #         l = edge_length[gid]
+    #         w = gid_to_w[gid]
+    #         maxspeed = w["maxspeed_forward"]
+    #         if not maxspeed:
+    #             hw = edge_highway[gid]
+    #             if hw.startswith("motorway"):
+    #                 maxspeed = 120
+    #             elif hw.startswith("trunk"):
+    #                 maxspeed = 100
+    #             elif hw.startswith("primary"):
+    #                 maxspeed = 80
+    #             elif hw.startswith("secondary"):
+    #                 maxspeed = 60
+    #             elif hw.startswith("tertiary"):
+    #                 maxspeed = 40
+    #             else:
+    #                 maxspeed = 30
+    #         travel_time_h += l / (maxspeed * 1000)
+    #         if edge_highway[gid].startswith("motorway"):
+    #             motorway_km += l / 1000
+
+    #     toll_estimate_yen = round(motorway_km * toll_per_km)
+
+    #     # 8. Entry / Exit IC
+    #     entry_pt = Point(full_line.coords[0])
+    #     exit_pt = Point(full_line.coords[-1])
+
+    #     entry_ic = self._db_query_one(
+    #         """
+    #         SELECT name, lon, lat
+    #         FROM motorway_ic
+    #         ORDER BY ST_SetSRID(ST_MakePoint(lon,lat),4326) <-> %s
+    #         LIMIT 1
+    #         """,
+    #         (entry_pt,),
+    #     )
+    #     exit_ic = self._db_query_one(
+    #         """
+    #         SELECT name, lon, lat
+    #         FROM motorway_ic
+    #         ORDER BY ST_SetSRID(ST_MakePoint(lon,lat),4326) <-> %s
+    #         LIMIT 1
+    #         """,
+    #         (exit_pt,),
+    #     )
+
+    #     # 9. Build result
+    #     route = {
+    #         "geometry": geom_geojson,
+    #         "distance_km": distance_km,
+    #         "travel_time_h": travel_time_h,
+    #         "motorway_km": motorway_km,
+    #         "toll_estimate_yen": toll_estimate_yen,
+    #         "entry_ic": entry_ic,
+    #         "exit_ic": exit_ic,
+    #     }
+
+    #     self._route_cache[cache_key] = route
+    #     return route
+    
+    # 2 nhanh nhất nhưng ko bt vì sao truck lại thẳng
+    # @timeit("Route Truck MM")
+    # def _route_truck_mm(
+    #     self,
+    #     o_lon: Point,
+    #     o_lat: Point,
+    #     d_lon: Point,
+    #     d_lat: Point,
+    #     toll_per_km: float = 30.0,
+    # ) -> Optional[Dict]:
+    #     """Get truck route using DB tables + Python Dijkstra/A*, cached and merged geometry."""
+
+    #     # 1️⃣ Cache key
+    #     cache_key = (
+    #         round(o_lon, 6),
+    #         round(o_lat, 6),
+    #         round(d_lon, 6),
+    #         round(d_lat, 6),
+    #         round(toll_per_km, 2),
+    #     )
+    #     if cache_key in self._route_cache:
+    #         return self._route_cache[cache_key]
+
+    #     # 2️⃣ Nearest nodes
+    #     src_node_row = self._nearest_node_id(o_lon, o_lat)
+    #     dst_node_row = self._nearest_node_id(d_lon, d_lat)
+    #     if not src_node_row or not dst_node_row or "nid" not in src_node_row or "nid" not in dst_node_row:
+    #         return None
+    #     src_node = src_node_row["nid"]
+    #     dst_node = dst_node_row["nid"]
+
+    #     # 3️⃣ Get ways in bounding box
+    #     min_lon, max_lon = min(o_lon, d_lon), max(o_lon, d_lon)
+    #     min_lat, max_lat = min(o_lat, d_lat), max(o_lat, d_lat)
+
+    #     ways = self._db_query_all(
+    #         """
+    #         SELECT gid, source, target, cost_s, reverse_cost, length_m, maxspeed_forward, highway,
+    #             ST_AsText(geom) AS geom_wkt
+    #         FROM jpn_ways
+    #         WHERE NOT blocked
+    #         AND geom && ST_Expand(ST_MakeEnvelope(%s,%s,%s,%s,4326), 0.05)
+    #         """,
+    #         (min_lon, min_lat, max_lon, max_lat),
+    #     )
+    #     if not ways:
+    #         return None
+
+    #     # 4️⃣ Build adjacency list and edge dicts
+    #     adj: Dict[int, List[Tuple[int, float, int, str]]] = {}
+    #     edge_geom: Dict[int, LineString] = {}
+    #     edge_highway: Dict[int, str] = {}
+    #     edge_length: Dict[int, float] = {}
+    #     gid_to_w = {}
+
+    #     for w in ways:
+    #         try:
+    #             geom = wkt.loads(w["geom_wkt"])
+    #         except:
+    #             continue 
+    #         edge_geom[w["gid"]] = geom
+    #         edge_highway[w["gid"]] = w["highway"]
+    #         edge_length[w["gid"]] = w["length_m"]
+    #         gid_to_w[w["gid"]] = w
+
+    #         adj.setdefault(w["source"], []).append((w["target"], w["cost_s"], w["gid"], w["highway"]))
+    #         if w["reverse_cost"] < 1e15:
+    #             adj.setdefault(w["target"], []).append((w["source"], w["reverse_cost"], w["gid"], w["highway"]))
+
+    #     # 5️⃣ Dijkstra
+    #     heap = [(0, src_node, [])]  # (cost, node, path_edges)
+    #     visited = {}
+    #     path_edges: List[int] = []
+
+    #     while heap:
+    #         cost, node, path = heapq.heappop(heap)
+    #         if node in visited:
+    #             continue
+    #         visited[node] = cost
+    #         path_edges = path
+    #         if node == dst_node:
+    #             break
+    #         for neigh, c, gid, hw in adj.get(node, []):
+    #             if neigh not in visited:
+    #                 heapq.heappush(heap, (cost + c, neigh, path + [gid]))
+
+    #     if not path_edges:
+    #         return None
+
+    #     # 6️⃣ Merge geometry (ST_LineMerge equivalent)
+    #     geom_lines = [edge_geom[gid] for gid in path_edges]
+    #     full_line = linemerge(geom_lines)
+    #     geom_geojson = mapping(full_line)
+
+    #     # 7️⃣ Compute distance, travel_time, motorway_km
+    #     distance_km = sum(edge_length[gid] for gid in path_edges) / 1000
+    #     travel_time_h = 0
+    #     motorway_km = 0
+
+    #     def default_speed(hw: str) -> float:
+    #         if hw.startswith("motorway"): return 120
+    #         if hw.startswith("trunk"): return 100
+    #         if hw.startswith("primary"): return 80
+    #         if hw.startswith("secondary"): return 60
+    #         if hw.startswith("tertiary"): return 40
+    #         return 30
+
+    #     for gid in path_edges:
+    #         seg = gid_to_w[gid]
+    #         l = edge_length[gid]
+    #         maxspeed = seg["maxspeed_forward"] or default_speed(seg["highway"])
+    #         travel_time_h += l / (maxspeed * 1000)
+    #         if seg["highway"] in ("motorway", "motorway_link"):
+    #             motorway_km += l / 1000
+
+    #     toll_estimate_yen = round(motorway_km * toll_per_km)
+
+    #     # 8️⃣ Entry / Exit IC
+    #     entry_pt = Point(full_line.coords[0])
+    #     exit_pt = Point(full_line.coords[-1])
+
+    #     entry_ic = self._db_query_one(
+    #         """
+    #         SELECT name, lon, lat
+    #         FROM motorway_ic
+    #         ORDER BY ST_SetSRID(ST_MakePoint(lon,lat),4326) <-> %s
+    #         LIMIT 1
+    #         """,
+    #         (entry_pt,),
+    #     )
+    #     exit_ic = self._db_query_one(
+    #         """
+    #         SELECT name, lon, lat
+    #         FROM motorway_ic
+    #         ORDER BY ST_SetSRID(ST_MakePoint(lon,lat),4326) <-> %s
+    #         LIMIT 1
+    #         """,
+    #         (exit_pt,),
+    #     )
+
+    #     # 9️⃣ Build result
+    #     route = {
+    #         "geometry": geom_geojson,
+    #         "distance_km": distance_km,
+    #         "travel_time_h": travel_time_h,
+    #         "motorway_km": motorway_km,
+    #         "toll_estimate_yen": toll_estimate_yen,
+    #         "entry_ic": entry_ic,
+    #         "exit_ic": exit_ic,
+    #     }
+
+    #     self._route_cache[cache_key] = route
+    #     return route
+    
+    #     # nhanh nhất nhưng ko bt vì sao truck lại ko thực tế vì tính A* ngoài python
+    
+    # test 2
+    # @timeit("Route Truck MM")
+    # def _route_truck_mm(
+    #     self,
+    #     o_lon: float,
+    #     o_lat: float,
+    #     d_lon: float,
+    #     d_lat: float,
+    #     toll_per_km: float = 30.0,
+    # ) -> Optional[Dict]:
+    #     """Get truck route using DB tables + cached geometry, distance, travel_time, motorway_km, toll."""
+
+    #     # 1️⃣ Cache key
+    #     cache_key = (
+    #         round(o_lon, 6),
+    #         round(o_lat, 6),
+    #         round(d_lon, 6),
+    #         round(d_lat, 6),
+    #         round(toll_per_km, 2),
+    #     )
+    #     if cache_key in self._route_cache:
+    #         return self._route_cache[cache_key]
+
+    #     # 2️⃣ Find nearest nodes
+    #     src_node_row = self._nearest_node_id(o_lon, o_lat)
+    #     dst_node_row = self._nearest_node_id(d_lon, d_lat)
+    #     if not src_node_row or not dst_node_row or "nid" not in src_node_row or "nid" not in dst_node_row:
+    #         return None
+    #     src_node = src_node_row["nid"]
+    #     dst_node = dst_node_row["nid"]
+
+    #     # 3️⃣ Call SQL to compute merged route geometry + metrics
+    #     sql = """
+    #     WITH r AS (
+    #         SELECT * FROM pgr_bdAstar(
+    #             $q$
+    #             SELECT gid AS id, source, target, cost_s AS cost, reverse_cost, geom
+    #             FROM jpn_ways
+    #             WHERE NOT blocked
+    #             $q$,
+    #             %s, %s, directed := true
+    #         )
+    #     ),
+    #     seg AS (
+    #         SELECT e.*, r.seq
+    #         FROM r
+    #         JOIN jpn_ways e ON e.gid = r.edge
+    #         ORDER BY r.seq
+    #     ),
+    #     agg AS (
+    #         SELECT
+    #             ST_AsGeoJSON(ST_MakeLine(seg.geom ORDER BY seq)) AS geom_geojson,
+    #             SUM(seg.length_m)/1000.0 AS distance_km,
+    #             SUM(
+    #                 seg.length_m / (
+    #                     COALESCE(seg.maxspeed_forward, 
+    #                         CASE
+    #                             WHEN seg.highway IN ('motorway','motorway_link') THEN 120.0
+    #                             WHEN seg.highway IN ('trunk','trunk_link') THEN 100.0
+    #                             WHEN seg.highway IN ('primary','primary_link') THEN 80.0
+    #                             WHEN seg.highway IN ('secondary','secondary_link') THEN 60.0
+    #                             WHEN seg.highway IN ('tertiary','tertiary_link') THEN 40.0
+    #                             ELSE 30.0
+    #                         END
+    #                     ) * 1000.0
+    #                 )
+    #             ) AS travel_time_h,
+    #             SUM(CASE WHEN seg.highway IN ('motorway','motorway_link') THEN seg.length_m ELSE 0 END)/1000.0 AS motorway_km
+    #         FROM seg
+    #     ),
+    #     mw AS (
+    #         SELECT * FROM seg WHERE highway IN ('motorway','motorway_link') ORDER BY seq
+    #     ),
+    #     entry_edge AS (SELECT * FROM mw ORDER BY seq ASC LIMIT 1),
+    #     exit_edge  AS (SELECT * FROM mw ORDER BY seq DESC LIMIT 1),
+    #     entry_pt AS (SELECT ST_StartPoint(geom) AS pt FROM entry_edge),
+    #     exit_pt AS (SELECT ST_EndPoint(geom) AS pt FROM exit_edge),
+    #     entry_ic AS (
+    #         SELECT name, lon, lat
+    #         FROM motorway_ic
+    #         ORDER BY ST_SetSRID(ST_MakePoint(lon,lat),4326) <-> (SELECT pt FROM entry_pt)
+    #         LIMIT 1
+    #     ),
+    #     exit_ic AS (
+    #         SELECT name, lon, lat
+    #         FROM motorway_ic
+    #         ORDER BY ST_SetSRID(ST_MakePoint(lon,lat),4326) <-> (SELECT pt FROM exit_pt)
+    #         LIMIT 1
+    #     )
+    #     SELECT
+    #         agg.geom_geojson,
+    #         COALESCE(agg.distance_km,0) AS distance_km,
+    #         COALESCE(agg.travel_time_h,0) AS travel_time_h,
+    #         COALESCE(agg.motorway_km,0) AS motorway_km,
+    #         (COALESCE(ROUND(agg.motorway_km * %s),0))::numeric AS toll_estimate_yen,
+    #         (SELECT name FROM entry_ic) AS entry_ic_name,
+    #         (SELECT lon FROM entry_ic) AS entry_ic_lon,
+    #         (SELECT lat FROM entry_ic) AS entry_ic_lat,
+    #         (SELECT name FROM exit_ic) AS exit_ic_name,
+    #         (SELECT lon FROM exit_ic) AS exit_ic_lon,
+    #         (SELECT lat FROM exit_ic) AS exit_ic_lat
+    #     FROM agg;
+    #     """
+
+    #     agg = self._db_query_one(sql, (src_node, dst_node, toll_per_km))
+    #     if not agg:
+    #         return None
+
+    #     # 4️⃣ Build result dictionary
+    #     route = {
+    #         "geometry": json.loads(agg["geom_geojson"]),
+    #         "distance_km": float(agg["distance_km"]),
+    #         "travel_time_h": float(agg["travel_time_h"]),
+    #         "motorway_km": float(agg["motorway_km"]),
+    #         "toll_estimate_yen": float(agg["toll_estimate_yen"]),
+    #         "entry_ic": {
+    #             "name": agg["entry_ic_name"],
+    #             "lon": agg["entry_ic_lon"],
+    #             "lat": agg["entry_ic_lat"],
+    #         },
+    #         "exit_ic": {
+    #             "name": agg["exit_ic_name"],
+    #             "lon": agg["exit_ic_lon"],
+    #             "lat": agg["exit_ic_lat"],
+    #         },
+    #     }
+
+    #     # 5️⃣ Cache
+    #     self._route_cache[cache_key] = route
+    #     return route
+    
+    
+    @timeit("Get Truck Route Info from DB")
     def _get_truck_route_info_db(
         self, start_point: Point, end_point: Point, toll_per_km: float = 30.0
     ) -> Optional[Dict]:
