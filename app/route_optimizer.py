@@ -6,13 +6,14 @@ Optimizes multimodal transportation routes (truck, train, ship)
 import geopandas as gpd
 import pandas as pd
 from shapely.geometry import Point, LineString
-from datetime import timedelta
+from datetime import timedelta, datetime
 import pyproj
 from typing import Dict, List, Optional, Tuple
 import numpy as np
 import json
 from shapely import wkt
 import math
+from constant import *
 from helper import (
     build_data_infos,
     build_result_segment,
@@ -214,6 +215,9 @@ class RouteOptimizer:
         origin_lon: float,
         dest_lat: float,
         dest_lon: float,
+        origin_name,
+        destination_name,
+        input_departure_hour: str,
         weight_tons: float = 10.0,
         mode: str = "all",
         enable_transfer: bool = False,
@@ -268,8 +272,11 @@ class RouteOptimizer:
             dest_point,
             nearest_ports,
             nearest_stations,
+            origin_name,
+            destination_name,
             weight_tons,
             mode,
+            input_departure_hour,
             enable_transfer,
             max_transfers,
             show_all,
@@ -354,6 +361,18 @@ class RouteOptimizer:
 
     def _nearest_station(self, lon: float, lat: float):
         return self._db_query_one("SELECT * FROM nearest_station(%s, %s)", (lon, lat))
+    
+    def _calculate_travel_time(self, input_departure_hour: str, travel_hours: float):
+        departure_hours = int(input_departure_hour)
+        departure_minutes = int(round((int(input_departure_hour) - departure_hours) * 60))
+        
+        arrival_number_hour = int(input_departure_hour) + travel_hours
+        arrival_hours = int(arrival_number_hour) if int(arrival_number_hour) < 23 else int(arrival_number_hour) - 24
+        arrival_minutes = int(round((arrival_number_hour - int(arrival_number_hour)) * 60))
+        return {
+            'departure_time': f"{departure_hours:02d}:{departure_minutes:02d}",
+            'arrival_time': f"{arrival_hours:02d}:{arrival_minutes:02d}"
+        }
 
     def _calculate_routes_by_mode(
         self,
@@ -361,8 +380,11 @@ class RouteOptimizer:
         dest_point: Point,
         nearest_ports: Dict,
         nearest_stations: Dict,
+        origin_name: str,
+        destination_name: str,
         weight_tons: float,
         mode: str,
+        input_departure_hour: str,
         enable_transfer: bool = False,
         max_transfers: int = 10,
         show_all: bool = False,
@@ -372,7 +394,7 @@ class RouteOptimizer:
 
         # Route 1: Truck only
         if mode == 'truck_only':
-            truck_route = self._calculate_truck_route(origin_point, dest_point, weight_tons)
+            truck_route = self._calculate_truck_route(origin_point, dest_point, weight_tons, input_departure_hour, origin_name, destination_name)
             if truck_route:
                 routes.append(truck_route)
 
@@ -392,14 +414,16 @@ class RouteOptimizer:
                         nearest_ports, weight_tons, max_transfers, show_all
                     )
 
-                    print(ship_routes,'ship_routes')
-
-                    if ship_routes:
-                        # Step 3: Combine truck routes + ship routes
-                        combined_routes = self._combine_truck_ship_routes(
-                            truck_routes, ship_routes, nearest_ports, weight_tons
-                        )
-                        routes.extend(combined_routes)
+                    if not ship_routes:
+                        ship_routes = self._create_ship_coords(nearest_ports['origin_port'], nearest_ports['dest_port'], [])
+                    
+                    print(ship_routes,'ship_routes')                    
+                    
+                    # Step 3: Combine truck routes + ship routes
+                    combined_routes = self._combine_truck_ship_routes(
+                        truck_routes, ship_routes, nearest_ports, weight_tons
+                    )
+                    routes.extend(combined_routes)
 
         # Route 3: Truck + Train
         if mode == 'truck_train':
@@ -460,6 +484,7 @@ class RouteOptimizer:
             truck_O_ptO_co2_emissions = self._calculate_co2_emissions(
                 "truck", weight_tons, truck_O_ptO_distance / 1000
             )
+            truck_O_ptO_time = truck_O_ptO["origin_to_port"]["time"]
 
             # Step 2: Find ship route
             ptO_ptD_routes = self._find_ship_routes_between_ports(
@@ -472,6 +497,7 @@ class RouteOptimizer:
                 ptO_ptD_geometry = self._create_ship_coords(origin_port, dest_port, [])
 
             ptO_ptD_distance = ptO_ptD_routes[0]['route_info']['distance']
+            ptO_ptD_time = ptO_ptD_routes[0]['route_info']['time']
 
             ptO_ptD_co2_emissions = self._calculate_co2_emissions(
                 "ship", weight_tons, ptO_ptD_distance / 1000
@@ -852,8 +878,8 @@ class RouteOptimizer:
             data_infos = build_data_infos(
                 origin_port=origin_port["C02_005"],
                 dest_port=dest_port["C02_005"],
-                origin_stations=stO_1["name"] + ", "+ stO_2["name"],
-                dest_stations=stD_1["name"] + ", "+ stD_2["name"],
+                origin_stations=stO_1["Station_Name"] + ", "+ stO_2["name"],
+                dest_stations=stD_1["Station_Name"] + ", "+ stD_2["name"],
                 emissions=emissions,
                 ship_time=0,
                 train_time_minutes=0,
@@ -1075,8 +1101,8 @@ class RouteOptimizer:
             data_infos = build_data_infos(
                 origin_port=origin_port["C02_005"],
                 dest_port=dest_port["C02_005"],
-                origin_stations=stO_1["name"],
-                dest_stations=stD_1["name"],
+                origin_stations=stO_1["Station_Name"],
+                dest_stations=stD_1["Station_Name"],
                 emissions=emissions,
                 ship_time=0,
                 train_time_minutes=0,
@@ -1278,7 +1304,12 @@ class RouteOptimizer:
         return normalized if len(normalized) >= 2 else None
 
     def _calculate_truck_route(
-        self, origin_point: Point, dest_point: Point, weight_tons: float
+        self, origin_point: Point,
+        dest_point: Point,
+        weight_tons: float,
+        input_departure_hour: int,
+        origin_name: str,
+        destination_name: str
     ) -> Optional[Dict]:
         """Calculate pure truck route"""
         try:
@@ -1291,25 +1322,35 @@ class RouteOptimizer:
                     "truck", weight_tons, distance_km
                 )
 
+                travel_time_hours = round(truck_info["time"], 2) / 60
+                travel_times = self._calculate_travel_time(input_departure_hour, travel_time_hours)
+
+                departure_time = travel_times['departure_time']
+                arrival_time = travel_times['arrival_time']
+
                 return {
                     "mode": "truck_only",
-                    "name": "Truck only",
+                    "vehice": VEHICES['truck'],
+                    "departure_time": departure_time,
+                    "arrival_time": arrival_time,
+                    "origin_name": origin_name,
+                    "destination_name": destination_name,
                     "total_time_minutes": (
-                        0 if np.isnan(truck_info["time"]) else truck_info["time"]
+                        0 if np.isnan(truck_info["time"]) else round(truck_info["time"], 2)
                     ),
                     "total_distance_meters": (
                         0
                         if np.isnan(truck_info["distance"])
-                        else truck_info["distance"]
+                        else round(truck_info["distance"], 2)
                     ),
-                    "total_distance_km": 0 if np.isnan(distance_km) else distance_km,
+                    "total_distance_km": 0 if np.isnan(distance_km) else round(distance_km, 2),
                     "co2_emissions_grams": (
-                        0 if np.isnan(co2_emissions) else co2_emissions
+                        0 if np.isnan(co2_emissions) else round(co2_emissions, 2)
                     ),
                     "truck_time_minutes": (
-                        0 if np.isnan(truck_info["time"]) else truck_info["time"]
+                        0 if np.isnan(truck_info["time"]) else round(truck_info["time"], 2)
                     ),
-                    "truck_distance_km": 0 if np.isnan(distance_km) else distance_km,
+                    "truck_distance_km": 0 if np.isnan(distance_km) else round(distance_km, 2),
                     "geometry": truck_info["geometry"],
                 }
         except Exception as e:
@@ -1836,7 +1877,7 @@ class RouteOptimizer:
             else:
                 route_name = "Truck + Train"
                 mode = "truck_train"
-
+            print(origin_station, 'origin_station')
             return {
                 "mode": mode,
                 "total_time_minutes": total_time,
@@ -2486,6 +2527,9 @@ class RouteOptimizer:
 
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(geojson_data, f, ensure_ascii=False, indent=2)
+        
+        with open('output_path.txt', "w", encoding="utf-8") as f:
+            json.dump(results, f, ensure_ascii=False, indent=2)
 
     def _convert_to_geojson(self, results: Dict) -> Dict:
         """Convert results to GeoJSON format"""
@@ -2573,7 +2617,13 @@ class RouteOptimizer:
                             "geometry": geometry,
                             "properties": convert_numpy_types(
                                 {
-                                    "mode": route.get("mode", ""),
+                                    "vehice": route.get("vehice", ""),
+                                    "departure_time": route.get(
+                                        "departure_time", '00:00'
+                                    ),
+	                                "arrival_time": route.get(
+                                        "arrival_time", '00:00'
+                                    ),
                                     "total_time_minutes": route.get(
                                         "total_time_minutes", 0
                                     ),
@@ -2583,26 +2633,14 @@ class RouteOptimizer:
                                     "total_distance_km": route.get(
                                         "total_distance_km", 0
                                     ),
-                                    "co2_emissions_grams": route.get(
+                                    "total_co2_emissions_grams": route.get(
                                         "co2_emissions_grams", 0
                                     ),
-                                    "origin_port": route.get("origin_port", ""),
-                                    "dest_port": route.get("dest_port", ""),
-                                    "origin_station": route.get("origin_station", ""),
-                                    "dest_station": route.get("dest_station", ""),
-                                    "transfer_port": route.get("transfer_port", ""),
-                                    "transfer_station": route.get(
-                                        "transfer_station", ""
+                                    "origin_name": route.get(
+                                        "origin_name", ''
                                     ),
-                                    "ship_time_hours": route.get("ship_time_hours", 0),
-                                    "train_time_minutes": route.get(
-                                        "train_time_minutes", 0
-                                    ),
-                                    "truck_time_minutes": route.get(
-                                        "truck_time_minutes", 0
-                                    ),
-                                    "truck_distance_km": route.get(
-                                        "truck_distance_km", 0
+	                                "destination_name": route.get(
+                                        "destination_name", ''
                                     ),
                                 }
                             ),

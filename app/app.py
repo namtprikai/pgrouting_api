@@ -99,13 +99,14 @@ class MultimodalBody(BaseModel):
     origin_name: str
     origin_lat: confloat(ge=-90, le=90)
     origin_lon: confloat(ge=-180, le=180)
-    dest_name: str
-    dest_lat: confloat(ge=-90, le=90)
-    dest_lon: confloat(ge=-180, le=180)
+    destination_name: str
+    destination_lat: confloat(ge=-90, le=90)
+    destination_lon: confloat(ge=-180, le=180)
     mode: str = STREET_TYPE["TRUCK_ONLY"]
     weight: int = 1
     max_transfers: int = 1
     show_all: bool = True
+    departure_hour: int
 
 # =========================
 # FastAPI
@@ -121,14 +122,24 @@ def multimodal_route(payload: MultimodalBody):
 
     if (payload.mode.upper() in STREET_TYPE):
         # 基本パラメータ
+        origin_name = payload.origin_name if payload.origin_name is not None else None
         origin_lat = float(payload.origin_lat) if payload.origin_lat is not None else None
         origin_lon = float(payload.origin_lon) if payload.origin_lon is not None else None
-        dest_lat = float(payload.dest_lat) if payload.dest_lat is not None else None
-        dest_lon = float(payload.dest_lon) if payload.dest_lon is not None else None
+        destination_name = payload.destination_name if payload.destination_name is not None else None
+        destination_lat = float(payload.destination_lat) if payload.destination_lat is not None else None
+        destination_lon = float(payload.destination_lon) if payload.destination_lon is not None else None
         mode = payload.mode.lower() if payload.mode is not None else STREET_TYPE["TRUCK_ONLY"].lower()
         weight = payload.weight if payload.weight is not None else 1
         max_transfers = payload.max_transfers if payload.max_transfers is not None else 1
         show_all = payload.show_all if payload.show_all is not None else True
+
+        if (payload.departure_hour < 0 or payload.departure_hour > 23 or not isinstance(payload.departure_hour, int)):
+            return {
+                'mode': payload.mode,
+                'msg': 'Error format: departure_hour'
+            }
+
+        departure_hour = payload.departure_hour if payload.departure_hour is not None else 0
 
         data_folder_path = FOLDER_DATA
         criteria = 'fastest'
@@ -144,8 +155,11 @@ def multimodal_route(payload: MultimodalBody):
         # Find route with automatic transfer detection
         results = optimizer.find_route(
             origin_lat, origin_lon, 
-            dest_lat, dest_lon, 
-            weight, mode,
+            destination_lat, destination_lon,
+            origin_name,
+            destination_name,
+            departure_hour,
+            weight,mode,
             enable_transfer=True,  # Automatically enabled
             max_transfers=max_transfers,
             show_all=show_all
@@ -196,22 +210,41 @@ def multimodal_route(payload: MultimodalBody):
             
         optimizer.save_results(save_results, 'output/' + file_name)
         print(f"\nResults saved to: output/{file_name}")
+        
+        geojson = optimizer._convert_to_geojson(save_results)
         if not show_all:
             print(f"Saved optimal route by criteria: {criteria}")
-        
+        print(results)
         data = results['optimal_routes'][criteria]
 
         summary = {
-            'time': data['total_time_minutes'] / 60 if 'total_time_minutes' in data and data['total_time_minutes'] else None,
-            'distance': data['total_distance_km'] if 'total_distance_km' in data and data['total_distance_km'] else None,
-            'co2': data['co2_emissions_grams'] if 'co2_emissions_grams' in data and data['co2_emissions_grams'] else None,
-            'mode': mode,
-            'origin_port': data['origin_port'] if 'origin_port' in data and data['origin_port'] else None,
-            'dest_port': data['dest_port'] if 'dest_port' in data and data['dest_port'] else None,
-            'origin_station': data['origin_station'] if 'origin_station' in data and data['origin_station'] else None,
-            'dest_station': data['dest_station'] if 'dest_station' in data and data['dest_station'] else None,
-            'transfer_port': data['transfer_port'] if 'transfer_port' in data and data['transfer_port'] else None,
-            'transfer_station': data['transfer_station'] if 'transfer_station' in data and data['transfer_station'] else None,
+            'mode': mode.upper(),
+
+            'origin_name': origin_name,
+            'destination_name': destination_name,
+            
+            'departure_time': data['departure_time'] if 'departure_time' in data and data['departure_time'] else None,
+            'arrival_time': data['arrival_time'] if 'arrival_time' in data and data['arrival_time'] else None,
+
+            'origin_lat': origin_lat,
+            'origin_lon': origin_lon,
+            'destination_lat': destination_lat,
+            'destination_lon': destination_lon,
+
+            'total_time_minutes': data['total_time_minutes'] if 'total_time_minutes' in data and data['total_time_minutes'] else None,
+            'total_distance_meters': data['total_distance_meters'] if 'total_distance_meters' in data and data['total_distance_meters'] else None,
+            'total_co2_emissions_grams': data['co2_emissions_grams'] if 'co2_emissions_grams' in data and data['co2_emissions_grams'] else None,
+
+            'waypoint_name_1': '',
+            'waypoint_vehice_1': '',
+            'waypoint_lat_1': '',
+            'waypoint_lon_1': '',
+            'waypoint_time_minutes_1': '',
+            'waypoint_distance_meters_1': '',
+            
+            'message': '', #"時刻表データがないため、簡易試算となります"
+
+            'geojson': geojson
         }
     else:
         summary = {
