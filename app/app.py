@@ -165,87 +165,94 @@ def multimodal_route(payload: MultimodalBody):
             show_all=show_all
         )
 
-        # Save to file
-        file_name = mode + '.geojson'
-        
-        # Determine what to save based on criteria
-        if show_all:
-            # Save all routes
-            save_results = results
+        if 'isError' in results and results.get('isError'):
+            summary = {
+                'mode': payload.mode,
+                'msg': results.get('message')
+            }
         else:
-            # Save only optimal route for the specified criteria
-            optimal_routes = results.get('optimal_routes', {})
-            if criteria in optimal_routes:
-                # Find the full route with geometry from the original routes list
-                optimal_route_summary = optimal_routes[criteria]
-                all_routes = results.get('routes', [])
-                
-                # Find the corresponding full route by matching name and mode
-                optimal_route_full = None
-                for route in all_routes:
-                    if (route.get('name') == optimal_route_summary.get('name') and 
-                        route.get('mode') == optimal_route_summary.get('mode')):
-                        optimal_route_full = route
-                        break
-                
-                
-                # Use full route if found, otherwise use summary
-                selected_route = optimal_route_full if optimal_route_full else optimal_route_summary
-                
-                save_results = {
-                    'origin': results.get('origin', {}),
-                    'destination': results.get('destination', {}),
-                    'weight_tons': results.get('weight_tons', 10.0),
-                    'routes': [selected_route],
-                    'optimal_routes': {criteria: optimal_route_summary},
-                    'criteria_used': criteria,
-                    'show_all': show_all,
-                    'mode': mode,
-                    'enable_transfer': True,  # Automatically enabled
-                    'max_transfers': max_transfers
-                }
-            else:
-                # Fallback to all routes if optimal route not found
+            # Save to file
+            file_name = mode + '.geojson'
+            
+            # Determine what to save based on criteria
+            if show_all:
+                # Save all routes
                 save_results = results
+            else:
+                # Save only optimal route for the specified criteria
+                optimal_routes = results.get('optimal_routes', {})
+                if criteria in optimal_routes:
+                    # Find the full route with geometry from the original routes list
+                    optimal_route_summary = optimal_routes[criteria]
+                    all_routes = results.get('routes', [])
+                    
+                    # Find the corresponding full route by matching name and mode
+                    optimal_route_full = None
+                    for route in all_routes:
+                        if (route.get('name') == optimal_route_summary.get('name') and 
+                            route.get('mode') == optimal_route_summary.get('mode')):
+                            optimal_route_full = route
+                            break
+                    
+                    
+                    # Use full route if found, otherwise use summary
+                    selected_route = optimal_route_full if optimal_route_full else optimal_route_summary
+                    
+                    save_results = {
+                        'origin': results.get('origin', {}),
+                        'destination': results.get('destination', {}),
+                        'weight_tons': results.get('weight_tons', 10.0),
+                        'routes': [selected_route],
+                        'optimal_routes': {criteria: optimal_route_summary},
+                        'criteria_used': criteria,
+                        'show_all': show_all,
+                        'mode': mode,
+                        'enable_transfer': True,  # Automatically enabled
+                        'max_transfers': max_transfers
+                    }
+                else:
+                    # Fallback to all routes if optimal route not found
+                    save_results = results
             
-        optimizer.save_results(save_results, 'output/' + file_name)
-        print(f"\nResults saved to: output/{file_name}")
-        
-        geojson = optimizer._convert_to_geojson(save_results)
-        if not show_all:
-            print(f"Saved optimal route by criteria: {criteria}")
-        print(results)
-        data = results['optimal_routes'][criteria]
-
-        summary = {
-            'mode': mode.upper(),
-
-            'origin_name': origin_name,
-            'destination_name': destination_name,
+            # print(save_results, 'save_results')
+            optimizer.save_results(save_results, 'output/' + file_name)
+            print(f"\nResults saved to: output/{file_name}")
             
-            'departure_time': data['departure_time'] if 'departure_time' in data and data['departure_time'] else None,
-            'arrival_time': data['arrival_time'] if 'arrival_time' in data and data['arrival_time'] else None,
+            geojson = optimizer._convert_to_geojson(save_results)
+            if not show_all:
+                print(f"Saved optimal route by criteria: {criteria}")
 
-            'origin_lat': origin_lat,
-            'origin_lon': origin_lon,
-            'destination_lat': destination_lat,
-            'destination_lon': destination_lon,
+            data = results['optimal_routes'][criteria]
 
-            'total_time_minutes': data['total_time_minutes'] if 'total_time_minutes' in data and data['total_time_minutes'] else None,
-            'total_distance_meters': data['total_distance_meters'] if 'total_distance_meters' in data and data['total_distance_meters'] else None,
-            'total_co2_emissions_grams': data['co2_emissions_grams'] if 'co2_emissions_grams' in data and data['co2_emissions_grams'] else None,
+            summary = {
+                'mode': mode.upper(),
 
-            'waypoint_name_1': '',
-            'waypoint_vehice_1': '',
-            'waypoint_lat_1': '',
-            'waypoint_lon_1': '',
-            'waypoint_time_minutes_1': '',
-            'waypoint_distance_meters_1': '',
-            
-            'message': '', #"時刻表データがないため、簡易試算となります"
+                'origin_name': origin_name,
+                'destination_name': destination_name,
+                
+                'departure_time': data['departure_time'] if 'departure_time' in data and data['departure_time'] else None,
+                'arrival_time': data['arrival_time'] if 'arrival_time' in data and data['arrival_time'] else None,
 
-            'geojson': geojson
-        }
+                'origin_lat': origin_lat,
+                'origin_lon': origin_lon,
+                'destination_lat': destination_lat,
+                'destination_lon': destination_lon,
+
+                'total_time_minutes': data['total_time_minutes'] if 'total_time_minutes' in data and data['total_time_minutes'] else None,
+                'total_distance_meters': data['total_distance_meters'] if 'total_distance_meters' in data and data['total_distance_meters'] else None,
+                'total_co2_emissions_grams': data['co2_emissions_grams'] if 'co2_emissions_grams' in data and data['co2_emissions_grams'] else None,
+
+                'waypoint_name_1': '',
+                'waypoint_vehice_1': '',
+                'waypoint_lat_1': '',
+                'waypoint_lon_1': '',
+                'waypoint_time_minutes_1': '',
+                'waypoint_distance_meters_1': '',
+                
+                'message': '', #"時刻表データがないため、簡易試算となります"
+
+                'geojson': geojson
+            }
     else:
         summary = {
             'mode': payload.mode,

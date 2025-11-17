@@ -5,7 +5,7 @@ Optimizes multimodal transportation routes (truck, train, ship)
 
 import geopandas as gpd
 import pandas as pd
-from shapely.geometry import Point, LineString
+from shapely.geometry import Point, LineString, mapping
 from datetime import timedelta, datetime
 import pyproj
 from typing import Dict, List, Optional, Tuple
@@ -281,17 +281,23 @@ class RouteOptimizer:
             max_transfers,
             show_all,
         )
+        
+        if 'isError' in routes and routes.get('isError'):
+            return {
+                'isError': routes.get('isError'),
+                'message': routes.get('message')
+            }
+        else:
+            # Find optimal routes
+            optimal_routes = self._find_optimal_routes(routes)
 
-        # Find optimal routes
-        optimal_routes = self._find_optimal_routes(routes)
-
-        return {
-            "origin": {"lat": origin_lat, "lon": origin_lon},
-            "destination": {"lat": dest_lat, "lon": dest_lon},
-            "weight_tons": 0,
-            "routes": routes,
-            "optimal_routes": optimal_routes,
-        }
+            return {
+                "origin": {"lat": origin_lat, "lon": origin_lon},
+                "destination": {"lat": dest_lat, "lon": dest_lon},
+                "weight_tons": 0,
+                "routes": routes,
+                "optimal_routes": optimal_routes,
+            }
 
     def _find_nearest_ports(self, origin_point: Point, dest_point: Point) -> Dict:
         """Find nearest ports to origin and destination points"""
@@ -362,17 +368,28 @@ class RouteOptimizer:
     def _nearest_station(self, lon: float, lat: float):
         return self._db_query_one("SELECT * FROM nearest_station(%s, %s)", (lon, lat))
     
-    def _calculate_travel_time(self, input_departure_hour: str, travel_hours: float):
-        departure_hours = int(input_departure_hour)
-        departure_minutes = int(round((int(input_departure_hour) - departure_hours) * 60))
-        
-        arrival_number_hour = int(input_departure_hour) + travel_hours
-        arrival_hours = int(arrival_number_hour) if int(arrival_number_hour) < 23 else int(arrival_number_hour) - 24
-        arrival_minutes = int(round((arrival_number_hour - int(arrival_number_hour)) * 60))
+    def _calculate_travel_time(self, input_departure_hour, travel_hours: float, wait: bool = False):
+        # --- Parse input departure time ---
+        if isinstance(input_departure_hour, int) or isinstance(input_departure_hour, float):
+            departure_dt = datetime.strptime(f"{int(input_departure_hour):02d}:00", "%H:%M")
+        elif isinstance(input_departure_hour, str):
+            departure_dt = datetime.strptime(input_departure_hour, "%H:%M")
+        else:
+            raise ValueError("input_departure_hour must be an int or HH:MM string")
+
+        # --- Add travel time ---
+        arrival_dt = departure_dt + timedelta(hours=travel_hours)
+
+        # --- Add waiting time if needed ---
+        if wait:
+            arrival_dt += timedelta(hours=1.5)
+
+        # --- Return formatted times ---
         return {
-            'departure_time': f"{departure_hours:02d}:{departure_minutes:02d}",
-            'arrival_time': f"{arrival_hours:02d}:{arrival_minutes:02d}"
+            "departure_time": departure_dt.strftime("%H:%M"),
+            "arrival_time": arrival_dt.strftime("%H:%M")
         }
+
 
     def _calculate_routes_by_mode(
         self,
@@ -397,6 +414,8 @@ class RouteOptimizer:
             truck_route = self._calculate_truck_route(origin_point, dest_point, weight_tons, input_departure_hour, origin_name, destination_name)
             if truck_route:
                 routes.append(truck_route)
+            else:
+                return {'isError': True, 'data': [], 'message': 'Truck route not found'}
 
         # Route 2: Truck + Ship
         if mode == 'truck_ship':
@@ -405,7 +424,7 @@ class RouteOptimizer:
                 
                 # Step 1: Find truck routes to nearest ports
                 truck_routes = self._get_truck_routes_to_ports(
-                    origin_point, dest_point, nearest_ports
+                    origin_point, dest_point, nearest_ports, input_departure_hour, origin_name, destination_name, weight_tons
                 )
 
                 if truck_routes:
@@ -414,16 +433,17 @@ class RouteOptimizer:
                         nearest_ports, weight_tons, max_transfers, show_all
                     )
 
-                    if not ship_routes:
-                        ship_routes = self._create_ship_coords(nearest_ports['origin_port'], nearest_ports['dest_port'], [])
+                    if ship_routes:
+                        # Step 3: Combine truck routes + ship routes
+                        combined_routes = self._combine_truck_ship_routes(
+                            truck_routes, ship_routes, nearest_ports, weight_tons
+                        )
                     
-                    print(ship_routes,'ship_routes')                    
-                    
-                    # Step 3: Combine truck routes + ship routes
-                    combined_routes = self._combine_truck_ship_routes(
-                        truck_routes, ship_routes, nearest_ports, weight_tons
-                    )
-                    routes.extend(combined_routes)
+                        routes.extend(combined_routes)
+                    else:
+                        return {'isError': True, 'data': [], 'message': 'Ship route: ' + nearest_ports['origin_port']["C02_005"] + ' -> ' + nearest_ports['dest_port']["C02_005"] + ' not found.'}
+                else:
+                    return {'isError': True, 'data': [], 'message': 'Truck route not found'}
 
         # Route 3: Truck + Train
         if mode == 'truck_train':
@@ -1990,7 +2010,7 @@ class RouteOptimizer:
             return LineString([(0, 0), (0, 0), (0, 0), (0, 0)])
 
     def _get_truck_routes_to_ports(
-        self, origin_point: Point, dest_point: Point, nearest_ports: Dict
+        self, origin_point: Point, dest_point: Point, nearest_ports: Dict, input_departure_hour: str = '', origin_name: str = '', destination_name: str = '', weight_tons: float = 0
     ) -> Optional[Dict]:
         """Step 1: Find truck routes to nearest ports"""
         try:
@@ -2005,12 +2025,66 @@ class RouteOptimizer:
             )
 
             if origin_to_port and port_to_dest:
-                return {
+                truck_routes = {
                     "origin_to_port": origin_to_port,
                     "port_to_dest": port_to_dest,
                     "origin_port": origin_port,
                     "dest_port": dest_port,
                 }
+                
+                origin_distance_km = 0 if np.isnan(origin_to_port["distance"]) else round(origin_to_port["distance"]/1000, 2)
+                origin_co2_emissions = self._calculate_co2_emissions('truck', weight_tons, origin_distance_km)
+                origin_travel_time = self._calculate_travel_time(input_departure_hour, round(origin_to_port["time"]/60, 2), False)
+                origin_travel_time_wait = self._calculate_travel_time(input_departure_hour, round(origin_to_port["time"]/60, 2), True)
+                origin_to_port_routes = {
+                    "departure_time": origin_travel_time['departure_time'],
+                    "arrival_time": origin_travel_time['arrival_time'],
+                    "arrival_time_wait": origin_travel_time_wait['arrival_time'],
+                    "origin_name": origin_name,
+                    "destination_name": origin_port["C02_005"],
+                    "total_time_minutes": (
+                        0 if np.isnan(origin_to_port["time"]) else round(origin_to_port["time"], 2)
+                    ),
+                    "total_distance_meters": (
+                        0
+                        if np.isnan(origin_to_port["distance"])
+                        else round(origin_to_port["distance"], 2)
+                    ),
+                    "total_distance_km": origin_distance_km,
+                    "co2_emissions_grams": (
+                        0 if np.isnan(origin_co2_emissions) else round(origin_co2_emissions, 2)
+                    ),
+                    "geometry": origin_to_port["geometry"],
+                }
+                truck_routes['origin_to_port_routes'] = origin_to_port_routes
+
+                dest_distance_km = 0 if np.isnan(port_to_dest["distance"]) else round(port_to_dest["distance"]/1000, 2)
+                dest_co2_emissions = self._calculate_co2_emissions('truck', weight_tons, dest_distance_km)
+                dest_travel_time = self._calculate_travel_time(input_departure_hour, port_to_dest["time"]/60, False)
+                dest_travel_time_wait = self._calculate_travel_time(input_departure_hour, round(port_to_dest["time"]/60, 2), True)
+                port_to_dest_routes = {
+                    "departure_time": dest_travel_time['departure_time'],
+                    "arrival_time": dest_travel_time['arrival_time'],
+                    "arrival_time_wait": dest_travel_time_wait['arrival_time'],
+                    "origin_name": dest_port['C02_005'],
+                    "destination_name": destination_name,
+                    "total_time_minutes": (
+                        0 if np.isnan(port_to_dest["time"]) else round(port_to_dest["time"], 2)
+                    ),
+                    "total_distance_meters": (
+                        0
+                        if np.isnan(port_to_dest["distance"])
+                        else round(port_to_dest["distance"], 2)
+                    ),
+                    "total_distance_km": origin_distance_km,
+                    "co2_emissions_grams": (
+                        0 if np.isnan(dest_co2_emissions) else round(dest_co2_emissions, 2)
+                    ),
+                    "geometry": port_to_dest["geometry"],
+                }
+                truck_routes['port_to_dest_routes'] = port_to_dest_routes
+
+                return truck_routes
             else:
                 return None
 
@@ -2036,13 +2110,33 @@ class RouteOptimizer:
             )
 
             if direct_ship:
+                co2_emissions = self._calculate_co2_emissions('ship', weight_tons, direct_ship["distance"] / 1000)
                 return [
-                    {"type": "direct", "route_info": direct_ship, "transfer_ports": []}
+                    {
+                        "type": "direct",
+                        "route_info": direct_ship,
+                        "transfer_ports": [],
+                        "vehice": VEHICES['ship'],
+                        "departure_time": direct_ship['departure_time'],
+                        "arrival_time": direct_ship['arrival_time'],
+                        "origin_name": origin_port["C02_005"],
+                        "destination_name": dest_port["C02_005"],
+                        "total_time_minutes": (
+                            0 if np.isnan(direct_ship['time']) else round(direct_ship['time'] * 60, 2)
+                        ),
+                        "total_distance_meters": (
+                            0
+                            if np.isnan(direct_ship["distance"])
+                            else round(direct_ship["distance"], 2)
+                        ),
+                        "total_distance_km": 0 if np.isnan(direct_ship["distance"]) else round(direct_ship["distance"] / 1000, 2),
+                        "co2_emissions_grams": co2_emissions
+                    }
                 ]
             else:
                 # Find ship routes via transfer
                 transfer_routes = self._find_ship_transfer_routes(
-                    origin_port, dest_port, max_transfers
+                    origin_port, dest_port, max_transfers, weight_tons
                 )
                 return transfer_routes
 
@@ -2069,6 +2163,7 @@ class RouteOptimizer:
                     route = self._create_combined_ship_route(
                         truck_routes,
                         ship_route["route_info"],
+                        ship_route,
                         origin_port,
                         dest_port,
                         weight_tons,
@@ -2081,6 +2176,7 @@ class RouteOptimizer:
                     route = self._create_combined_ship_route(
                         truck_routes,
                         ship_route["route_info"],
+                        ship_route,
                         origin_port,
                         dest_port,
                         weight_tons,
@@ -2088,7 +2184,6 @@ class RouteOptimizer:
                     )
                     if route:
                         combined_routes.append(route)
-            print(combined_routes, 'combined_routes')
             return combined_routes
 
         except Exception as e:
@@ -2096,7 +2191,7 @@ class RouteOptimizer:
             return []
 
     def _find_ship_transfer_routes(
-        self, origin_port: Dict, dest_port: Dict, max_transfers: int
+        self, origin_port: Dict, dest_port: Dict, max_transfers: int, weight_tons: float
     ) -> List[Dict]:
         """Find ship routes via transfer"""
         try:
@@ -2121,21 +2216,19 @@ class RouteOptimizer:
 
             # Find transfer ports
             transfer_ports = set(from_origin) & set(to_dest)
-            print(transfer_ports, 'transfer_port')
             routes = []
             for transfer_port in list(transfer_ports)[:max_transfers]:
                 # Find ship routes via transfer
                 leg1 = self._get_ship_route_info(origin_port["C02_005"], transfer_port)
                 leg2 = self._get_ship_route_info(transfer_port, dest_port["C02_005"])
 
-                print(leg1, 'leg1')
-                print(leg2, 'leg2')
-
                 if leg1 and leg2:
                     # Calculate total information
                     total_time = leg1["time"] + leg2["time"]
                     total_distance = leg1["distance"] + leg2["distance"]
 
+                    leg1_co2_emissions = self._calculate_co2_emissions('ship', weight_tons, leg1["distance"] / 1000)
+                    leg2_co2_emissions = self._calculate_co2_emissions('ship', weight_tons, leg2["distance"] / 1000)
                     routes.append(
                         {
                             "type": "transfer",
@@ -2144,6 +2237,30 @@ class RouteOptimizer:
                                 "distance": total_distance,
                             },
                             "transfer_ports": [str(transfer_port)],
+                            "leg1": {
+                                "vehice": VEHICES['ship'],
+                                "departure_time": leg1['departure_time'],
+                                "arrival_time": leg1['arrival_time'],
+                                "origin_name": origin_port["C02_005"],
+                                "destination_name": transfer_port,
+                                "total_time_minutes": (
+                                    0 if np.isnan(leg1['time']) else round(leg1['time'] * 60, 2)
+                                ),
+                                "total_distance_km": 0 if np.isnan(leg1["distance"]) else round(leg1["distance"] / 1000, 2),
+                                "co2_emissions_grams": leg1_co2_emissions
+                            },
+                            "leg2": {
+                                "vehice": VEHICES['ship'],
+                                "departure_time": leg2['departure_time'],
+                                "arrival_time": leg2['arrival_time'],
+                                "origin_name": transfer_port,
+                                "destination_name": dest_port["C02_005"],
+                                "total_time_minutes": (
+                                    0 if np.isnan(leg2['time']) else round(leg2['time'] * 60, 2)
+                                ),
+                                "total_distance_km": 0 if np.isnan(leg2["distance"]) else round(leg2["distance"] / 1000, 2),
+                                "co2_emissions_grams": leg2_co2_emissions
+                            }
                         }
                     )
 
@@ -2157,6 +2274,7 @@ class RouteOptimizer:
         self,
         truck_routes: Dict,
         ship_info: Dict,
+        ship_route: Dict,
         origin_port: Dict,
         dest_port: Dict,
         weight_tons: float,
@@ -2164,6 +2282,7 @@ class RouteOptimizer:
     ) -> Optional[Dict]:
         """Create combined truck + ship route"""
         try:
+            print(ship_route, 'ship_route')
             origin_to_port = truck_routes["origin_to_port"]
             port_to_dest = truck_routes["port_to_dest"]
 
@@ -2198,6 +2317,12 @@ class RouteOptimizer:
                 origin_to_port, port_to_dest, origin_port, dest_port, transfer_ports
             )
 
+            # Create ship geometry
+            ship_geometry = self._create_ship_coords(origin_port, dest_port, transfer_ports)
+
+            if transfer_ports:
+                ship_segments = self.split_coords_into_segments(ship_geometry)
+            
             # Create route name
             if transfer_ports:
                 route_name = f"Truck + Ship (transfer via {', '.join(transfer_ports)})"
@@ -2206,6 +2331,108 @@ class RouteOptimizer:
                 route_name = "Truck + Ship"
                 mode = "truck_ship"
 
+            features = []
+            # ---- Feature 1: Truck (Origin → Origin Port)\
+            f1 = {
+                "vehice": VEHICES['truck'],
+                "departure_time": truck_routes['origin_to_port_routes']['departure_time'],
+                "arrival_time": truck_routes['origin_to_port_routes']['arrival_time'],
+                "arrival_time_wait": truck_routes['origin_to_port_routes']['arrival_time_wait'],
+                "origin_name": truck_routes['origin_to_port_routes']['origin_name'],
+                "destination_name": truck_routes['origin_to_port_routes']['destination_name'],
+                "total_time_minutes": (
+                    0 if np.isnan(truck_routes['origin_to_port_routes']['total_time_minutes']) else truck_routes['origin_to_port_routes']['total_time_minutes']
+                ),
+                "total_distance_meters": (
+                    0
+                    if np.isnan(truck_routes['origin_to_port_routes']['total_distance_meters'])
+                    else truck_routes['origin_to_port_routes']['total_distance_meters']
+                ),
+                "total_distance_km": 0 if np.isnan(truck_routes['origin_to_port_routes']['total_distance_km']) else truck_routes['origin_to_port_routes']['total_distance_km'],
+                "co2_emissions_grams": (
+                    0 if np.isnan(truck_routes['origin_to_port_routes']['co2_emissions_grams']) else truck_routes['origin_to_port_routes']['co2_emissions_grams']
+                ),
+                "geometry": origin_to_port["geometry"],
+            }
+            features.append(f1)
+
+            f2 = {
+                "vehice": VEHICES['ship'],
+                "departure_time": ship_route['departure_time'],
+                "arrival_time": ship_route['arrival_time'],
+                "origin_name": ship_route['origin_name'],
+                "destination_name": ship_route['destination_name'],
+                "total_time_minutes": (
+                    0 if np.isnan(ship_route['total_time_minutes']) else ship_route['total_time_minutes']
+                ),
+                "total_distance_km": 0 if np.isnan(ship_route['total_distance_km']) else ship_route['total_distance_km'],
+                "co2_emissions_grams": (
+                    0 if np.isnan(ship_route['co2_emissions_grams']) else ship_route['co2_emissions_grams']
+                ),
+                "geometry": ship_segments[0] if transfer_ports else ship_geometry,
+            }
+            features.append(f2)
+
+            if transfer_ports:
+                f2 = {
+                    "vehice": VEHICES['ship'],
+                    "departure_time": ship_route['leg1']['departure_time'],
+                    "arrival_time": ship_route['leg1']['arrival_time'],
+                    "origin_name": ship_route['leg1']['origin_name'],
+                    "destination_name": ship_route['leg1']['destination_name'],
+                    "total_time_minutes": (
+                        0 if np.isnan(ship_route['leg1']['total_time_minutes']) else ship_route['leg1']['total_time_minutes']
+                    ),
+                    "total_distance_km": 0 if np.isnan(ship_route['leg1']['total_distance_km']) else ship_route['leg1']['total_distance_km'],
+                    "co2_emissions_grams": (
+                        0 if np.isnan(ship_route['leg1']['co2_emissions_grams']) else ship_route['leg1']['co2_emissions_grams']
+                    ),
+                    "geometry": ship_segments[0] if transfer_ports else ship_geometry,
+                }
+                features.append(f2)
+
+                f3 = {
+                    "vehice": VEHICES['ship'],
+                    "departure_time": ship_route['leg2']['departure_time'],
+                    "arrival_time": ship_route['leg2']['arrival_time'],
+                    "origin_name": ship_route['leg2']['origin_name'],
+                    "destination_name": ship_route['leg2']['destination_name'],
+                    "total_time_minutes": (
+                        0 if np.isnan(ship_route['leg2']['total_time_minutes']) else ship_route['leg2']['total_time_minutes']
+                    ),
+                    "total_distance_km": 0 if np.isnan(ship_route['leg2']['total_distance_km']) else ship_route['leg2']['total_distance_km'],
+                    "co2_emissions_grams": (
+                        0 if np.isnan(ship_route['leg2']['co2_emissions_grams']) else ship_route['leg2']['co2_emissions_grams']
+                    ),
+                    "geometry": ship_segments[1],
+                }
+                features.append(f3)
+
+            train_arrival_time = f3['arrival_time'] if transfer_ports else f2['arrival_time']
+            truck_departure_time = self._calculate_travel_time(train_arrival_time, truck_routes['port_to_dest_routes']['total_time_minutes'] / 60, False)
+
+            f4 = {
+                "vehice": VEHICES['truck'],
+                "departure_time": train_arrival_time,
+                "arrival_time": truck_departure_time['arrival_time'],
+                # "arrival_time": truck_routes['port_to_dest_routes']['arrival_time'],
+                "origin_name": truck_routes['port_to_dest_routes']['origin_name'],
+                "destination_name": truck_routes['port_to_dest_routes']['destination_name'],
+                "total_time_minutes": (
+                    0 if np.isnan(truck_routes['port_to_dest_routes']['total_time_minutes']) else truck_routes['port_to_dest_routes']['total_time_minutes']
+                ),
+                "total_distance_meters": (
+                    0
+                    if np.isnan(truck_routes['port_to_dest_routes']['total_distance_meters'])
+                    else truck_routes['port_to_dest_routes']['total_distance_meters']
+                ),
+                "total_distance_km": 0 if np.isnan(truck_routes['port_to_dest_routes']['total_distance_km']) else truck_routes['port_to_dest_routes']['total_distance_km'],
+                "co2_emissions_grams": (
+                    0 if np.isnan(truck_routes['port_to_dest_routes']['co2_emissions_grams']) else truck_routes['port_to_dest_routes']['co2_emissions_grams']
+                ),
+                "geometry": port_to_dest.get("geometry"),
+            }
+            features.append(f4)
             return {
                 "mode": mode,
                 "total_time_minutes": total_time,
@@ -2226,12 +2453,19 @@ class RouteOptimizer:
                 )
                 / 1000,
                 "geometry": geometry,
+                "features": features
             }
 
         except Exception as e:
             print(f"Error creating combined ship route: {e}")
             return None
 
+    def split_coords_into_segments(self, coords):
+        segments = []
+        for i in range(len(coords) - 1):
+            segments.append([coords[i], coords[i + 1]])
+        return segments
+    
     def _create_combined_ship_geometry(
         self,
         origin_to_port: Dict,
@@ -2333,7 +2567,6 @@ class RouteOptimizer:
 
             # Add final destination
             ship_coords.append((dest_port["X"], dest_port["Y"]))
-            print(ship_coords, 'ship coord')
             return ship_coords
         else:
             # Direct ship route
@@ -2434,6 +2667,9 @@ class RouteOptimizer:
 
         if not route.empty:
             route_time = route["Route_Time"].iloc[0]
+            departure_time = route["Departure_Time"].iloc[0]
+            arrival_time = route["Arrival_Time"].iloc[0]
+
             # Calculate distance between ports
             origin_port_data = self.minato_gdf[
                 self.minato_gdf["C02_005"] == origin_port
@@ -2448,7 +2684,7 @@ class RouteOptimizer:
                     dest_port_data["X"].iloc[0],
                 )
 
-                return {"time": route_time, "distance": distance}
+                return {"time": route_time, "distance": distance, 'departure_time': departure_time, 'arrival_time': arrival_time}
 
         return None
 
@@ -2519,7 +2755,7 @@ class RouteOptimizer:
             "shortest": create_route_summary(min_distance_route),
             "greenest": create_route_summary(min_co2_route),
         }
-
+    
     def save_results(self, results: Dict, output_path: str):
         """Save results to GeoJSON file"""
         # Convert results to GeoJSON format
@@ -2528,8 +2764,8 @@ class RouteOptimizer:
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(geojson_data, f, ensure_ascii=False, indent=2)
         
-        with open('output_path.txt', "w", encoding="utf-8") as f:
-            json.dump(results, f, ensure_ascii=False, indent=2)
+        with open('data.txt', "w", encoding="utf-8") as f:
+            json.dump(str(results), f, ensure_ascii=False, indent=2)
 
     def _convert_to_geojson(self, results: Dict) -> Dict:
         """Convert results to GeoJSON format"""
@@ -2556,146 +2792,258 @@ class RouteOptimizer:
         geojson = {
             "type": "FeatureCollection",
             "features": [],
-            "properties": convert_numpy_types(
-                {
-                    "origin": results.get("origin", {}),
-                    "destination": results.get("destination", {}),
-                    "weight_tons": results.get("weight_tons", 10.0),
-                    "optimal_routes": results.get("optimal_routes", {}),
-                    "search_options": {
-                        "criteria_used": results.get("criteria_used", "fastest"),
-                        "show_all": results.get("show_all", False),
-                        "mode": results.get("mode", "all"),
-                        "enable_transfer": results.get("enable_transfer", False),
-                        "max_transfers": results.get("max_transfers", 2),
-                    },
-                }
-            ),
+            # "properties": convert_numpy_types(
+            #     {
+            #         "origin": results.get("origin", {}),
+            #         "destination": results.get("destination", {}),
+            #         "weight_tons": results.get("weight_tons", 10.0),
+            #         "optimal_routes": results.get("optimal_routes", {}),
+            #         "search_options": {
+            #             "criteria_used": results.get("criteria_used", "fastest"),
+            #             "show_all": results.get("show_all", False),
+            #             "mode": results.get("mode", "all"),
+            #             "enable_transfer": results.get("enable_transfer", False),
+            #             "max_transfers": results.get("max_transfers", 2),
+            #         },
+            #     }
+            # ),
         }
 
         # Convert each route to a GeoJSON feature
         for route in results.get("routes", []):
-            if "geometry" in route and route["geometry"]:
-                try:
-                    geometry = route["geometry"]
+            if "features" in route and route["features"]:
+                for feature in route["features"]:
+                    try:
+                        geometry = feature["geometry"]
 
-                    # Handle different geometry types
-                    if isinstance(geometry, str):
-                        # If it's a WKT string, parse it
-                        try:
-                            geometry = wkt.loads(geometry)
-                        except:
-                            # If WKT parsing fails, try to parse as JSON
+                        # Handle different geometry types
+                        if isinstance(geometry, str):
+                            # If it's a WKT string, parse it
                             try:
-                                geometry = json.loads(geometry)
+                                geometry = wkt.loads(geometry)
+                            except:
+                                # If WKT parsing fails, try to parse as JSON
+                                try:
+                                    geometry = json.loads(geometry)
+                                except:
+                                    print(f"Warning: Could not parse geometry string: {geometry[:100]}...")
+                                    continue
+
+                        elif isinstance(geometry, LineString):
+                            # Already a LineString object
+                            pass
+
+                        elif isinstance(geometry, dict):
+                            # Already GeoJSON format: {"type": "LineString", "coordinates": [...]}
+                            pass
+
+                        elif isinstance(geometry, list):
+                            # List of coordinates → convert to LineString
+                            try:
+                                geometry = LineString(geometry)
+                            except:
+                                print(f"Warning: Could not convert list geometry: {geometry[:100]}...")
+                                continue
+
+                        else:
+                            # Try to convert other geometry types
+                            try:
+                                geometry = wkt.loads(str(geometry))
+                            except:
+                                print(f"Warning: Could not convert geometry: {type(geometry)}")
+                                continue
+
+                        # Create feature
+                        if isinstance(geometry, dict):
+                            # Already GeoJSON
+                            feature = {
+                                "type": "Feature",
+                                "geometry": geometry,
+                                "properties": convert_numpy_types(
+                                    {
+                                        "vehice": feature.get("vehice", ""),
+                                        "departure_time": feature.get(
+                                            "departure_time", '00:00'
+                                        ),
+                                        "arrival_time": feature.get(
+                                            "arrival_time", '00:00'
+                                        ),
+                                        "total_time_minutes": feature.get(
+                                            "total_time_minutes", 0
+                                        ),
+                                        "total_distance_km": feature.get(
+                                            "total_distance_km", 0
+                                        ),
+                                        "total_co2_emissions_grams": feature.get(
+                                            "co2_emissions_grams", 0
+                                        ),
+                                        "origin_name": feature.get(
+                                            "origin_name", ''
+                                        ),
+                                        "destination_name": feature.get(
+                                            "destination_name", ''
+                                        ),
+                                    }
+                                ),
+                            }
+                        else:
+                            # Shapely geometry
+                            feature = {
+                                "type": "Feature",
+                                "geometry": {
+                                    "type": geometry.geom_type,
+                                    "coordinates": list(geometry.coords),
+                                },
+                                "properties": convert_numpy_types(
+                                    {
+                                        "vehice": feature.get("vehice", ""),
+                                        "departure_time": feature.get(
+                                            "departure_time", '00:00'
+                                        ),
+                                        "arrival_time": feature.get(
+                                            "arrival_time", '00:00'
+                                        ),
+                                        "total_time_minutes": feature.get(
+                                            "total_time_minutes", 0
+                                        ),
+                                        "total_distance_km": feature.get(
+                                            "total_distance_km", 0
+                                        ),
+                                        "total_co2_emissions_grams": feature.get(
+                                            "co2_emissions_grams", 0
+                                        ),
+                                        "origin_name": feature.get(
+                                            "origin_name", ''
+                                        ),
+                                        "destination_name": feature.get(
+                                            "destination_name", ''
+                                        ),
+                                    }
+                                ),
+                            }
+
+                        geojson["features"].append(feature)
+
+                    except Exception as e:
+                        print(
+                            f"Warning: Could not convert geometry for route {route.get('name', '')}: {e}"
+                        )
+            else:
+                if "geometry" in route and route["geometry"]:
+                    try:
+                        geometry = route["geometry"]
+
+                        # Handle different geometry types
+                        if isinstance(geometry, str):
+                            # If it's a WKT string, parse it
+                            try:
+                                geometry = wkt.loads(geometry)
+                            except:
+                                # If WKT parsing fails, try to parse as JSON
+                                try:
+                                    geometry = json.loads(geometry)
+                                except:
+                                    print(
+                                        f"Warning: Could not parse geometry string: {geometry[:100]}..."
+                                    )
+                                    continue
+                        elif isinstance(geometry, LineString):
+                            # If it's already a LineString object, use it directly
+                            pass
+                        elif isinstance(geometry, dict):
+                            # Already GeoJSON, use as is
+                            pass
+                        else:
+                            # Try to convert other geometry types
+                            try:
+                                geometry = wkt.loads(str(geometry))
                             except:
                                 print(
-                                    f"Warning: Could not parse geometry string: {geometry[:100]}..."
+                                    f"Warning: Could not convert geometry: {type(geometry)}"
                                 )
                                 continue
-                    elif isinstance(geometry, LineString):
-                        # If it's already a LineString object, use it directly
-                        pass
-                    elif isinstance(geometry, dict):
-                        # Already GeoJSON, use as is
-                        pass
-                    else:
-                        # Try to convert other geometry types
-                        try:
-                            geometry = wkt.loads(str(geometry))
-                        except:
-                            print(
-                                f"Warning: Could not convert geometry: {type(geometry)}"
-                            )
-                            continue
 
-                    # Create feature
-                    if isinstance(geometry, dict):
-                        # Already GeoJSON
-                        feature = {
-                            "type": "Feature",
-                            "geometry": geometry,
-                            "properties": convert_numpy_types(
-                                {
-                                    "vehice": route.get("vehice", ""),
-                                    "departure_time": route.get(
-                                        "departure_time", '00:00'
-                                    ),
-	                                "arrival_time": route.get(
-                                        "arrival_time", '00:00'
-                                    ),
-                                    "total_time_minutes": route.get(
-                                        "total_time_minutes", 0
-                                    ),
-                                    "total_distance_meters": route.get(
-                                        "total_distance_meters", 0
-                                    ),
-                                    "total_distance_km": route.get(
-                                        "total_distance_km", 0
-                                    ),
-                                    "total_co2_emissions_grams": route.get(
-                                        "co2_emissions_grams", 0
-                                    ),
-                                    "origin_name": route.get(
-                                        "origin_name", ''
-                                    ),
-	                                "destination_name": route.get(
-                                        "destination_name", ''
-                                    ),
-                                }
-                            ),
-                        }
-                    else:
-                        # Shapely geometry
-                        feature = {
-                            "type": "Feature",
-                            "geometry": {
-                                "type": geometry.geom_type,
-                                "coordinates": list(geometry.coords),
-                            },
-                            "properties": convert_numpy_types(
-                                {
-                                    "mode": route.get("mode", ""),
-                                    "total_time_minutes": route.get(
-                                        "total_time_minutes", 0
-                                    ),
-                                    "total_distance_meters": route.get(
-                                        "total_distance_meters", 0
-                                    ),
-                                    "total_distance_km": route.get(
-                                        "total_distance_km", 0
-                                    ),
-                                    "co2_emissions_grams": route.get(
-                                        "co2_emissions_grams", 0
-                                    ),
-                                    "origin_port": route.get("origin_port", ""),
-                                    "dest_port": route.get("dest_port", ""),
-                                    "origin_station": route.get("origin_station", ""),
-                                    "dest_station": route.get("dest_station", ""),
-                                    "transfer_port": route.get("transfer_port", ""),
-                                    "transfer_station": route.get(
-                                        "transfer_station", ""
-                                    ),
-                                    "ship_time_hours": route.get("ship_time_hours", 0),
-                                    "train_time_minutes": route.get(
-                                        "train_time_minutes", 0
-                                    ),
-                                    "truck_time_minutes": route.get(
-                                        "truck_time_minutes", 0
-                                    ),
-                                    "truck_distance_km": route.get(
-                                        "truck_distance_km", 0
-                                    ),
-                                }
-                            ),
-                        }
+                        # Create feature
+                        if isinstance(geometry, dict):
+                            # Already GeoJSON
+                            feature = {
+                                "type": "Feature",
+                                "geometry": geometry,
+                                "properties": convert_numpy_types(
+                                    {
+                                        "vehice": route.get("vehice", ""),
+                                        "departure_time": route.get(
+                                            "departure_time", '00:00'
+                                        ),
+                                        "arrival_time": route.get(
+                                            "arrival_time", '00:00'
+                                        ),
+                                        "total_time_minutes": route.get(
+                                            "total_time_minutes", 0
+                                        ),
+                                        "total_distance_meters": route.get(
+                                            "total_distance_meters", 0
+                                        ),
+                                        "total_distance_km": route.get(
+                                            "total_distance_km", 0
+                                        ),
+                                        "total_co2_emissions_grams": route.get(
+                                            "co2_emissions_grams", 0
+                                        ),
+                                        "origin_name": route.get(
+                                            "origin_name", ''
+                                        ),
+                                        "destination_name": route.get(
+                                            "destination_name", ''
+                                        ),
+                                    }
+                                ),
+                            }
+                        else:
+                            # Shapely geometry
+                            feature = {
+                                "type": "Feature",
+                                "geometry": {
+                                    "type": geometry.geom_type,
+                                    "coordinates": list(geometry.coords),
+                                },
+                                "properties": convert_numpy_types(
+                                    {
+                                        "vehice": route.get("vehice", ""),
+                                        "departure_time": route.get(
+                                            "departure_time", '00:00'
+                                        ),
+                                        "arrival_time": route.get(
+                                            "arrival_time", '00:00'
+                                        ),
+                                        "total_time_minutes": route.get(
+                                            "total_time_minutes", 0
+                                        ),
+                                        "total_distance_meters": route.get(
+                                            "total_distance_meters", 0
+                                        ),
+                                        "total_distance_km": route.get(
+                                            "total_distance_km", 0
+                                        ),
+                                        "total_co2_emissions_grams": route.get(
+                                            "co2_emissions_grams", 0
+                                        ),
+                                        "origin_name": route.get(
+                                            "origin_name", ''
+                                        ),
+                                        "destination_name": route.get(
+                                            "destination_name", ''
+                                        ),
+                                    }
+                                ),
+                            }
 
-                    geojson["features"].append(feature)
+                        geojson["features"].append(feature)
 
-                except Exception as e:
-                    print(
-                        f"Warning: Could not convert geometry for route {route.get('name', '')}: {e}"
-                    )
+                    except Exception as e:
+                        print(
+                            f"Warning: Could not convert geometry for route {route.get('name', '')}: {e}"
+                        )
 
         return geojson
 
