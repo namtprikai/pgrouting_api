@@ -1683,6 +1683,178 @@ class RouteOptimizer:
 
         return None
 
+    def _calculate_train_route_modified(
+        self,
+        input_departure_hour: str,
+        origin_point: Point,
+        dest_point: Point,
+        origin_name: str,
+        destination_name: str,
+        nearest_stations: Dict,
+        weight_tons: float,
+    ) -> Tuple[Optional[Dict], Optional[Dict], Optional[Dict]]:
+        try:
+            origin_station = nearest_stations["origin_station"]
+            dest_station = nearest_stations["dest_station"]
+
+            origin_to_station = self._get_truck_route_info(
+                origin_point,
+                Point(origin_station["lon"], origin_station["lat"]),
+            )
+
+            station_to_dest = self._get_truck_route_info(
+                Point(dest_station["lon"], dest_station["lat"]),
+                dest_point,
+            )
+
+            train_info = self._get_train_route_info_test(
+                origin_station["Station_Name"],
+                dest_station["Station_Name"],
+            )
+
+            if not origin_to_station or not station_to_dest or not train_info:
+                if origin_to_station and station_to_dest:
+                    self._last_truck_routes = {
+                        "origin_to_station": origin_to_station,
+                        "station_to_dest": station_to_dest,
+                    }
+                    self._last_stations = {
+                        "origin_station": origin_station,
+                        "dest_station": dest_station,
+                    }
+                return None, None, None
+
+            co2_truck_1 = round(
+                self._calculate_co2_emissions(
+                    "truck",
+                    weight_tons,
+                    origin_to_station["distance"] / 1000,
+                ),
+                2,
+            )
+            co2_truck_2 = round(
+                self._calculate_co2_emissions(
+                    "truck",
+                    weight_tons,
+                    station_to_dest["distance"] / 1000,
+                ),
+                2,
+            )
+            co2_train = round(
+                self._calculate_co2_emissions(
+                    "train",
+                    weight_tons,
+                    train_info["distance"],
+                ),
+                2,
+            )
+
+            truck_geom_1 = origin_to_station.get("geometry")
+            if not truck_geom_1:
+                truck_geom_1 = LineString(
+                    [
+                        (origin_point.x, origin_point.y),
+                        (origin_station["lon"], origin_station["lat"]),
+                    ]
+                )
+
+            train_geom = LineString(
+                [
+                    (origin_station["lon"], origin_station["lat"]),
+                    (dest_station["lon"], dest_station["lat"]),
+                ]
+            )
+
+            truck_geom_2 = station_to_dest.get("geometry")
+            if not truck_geom_2:
+                truck_geom_2 = LineString(
+                    [
+                        (dest_station["lon"], dest_station["lat"]),
+                        (dest_point.x, dest_point.y),
+                    ]
+                )
+
+            # Calculate truck_1 arrival time
+            truck_1_travel_time_hours = round(origin_to_station["time"], 2) / 60
+            truck_1_travel_times = self._calculate_travel_time(
+                input_departure_hour,
+                truck_1_travel_time_hours,
+            )
+            truck_1_departure_time = truck_1_travel_times["departure_time"]
+            truck_1_arrival_time = truck_1_travel_times["arrival_time"]
+
+            # Calculate train arrival time
+            def to_hhmm(t):
+                t = str(t)
+                if " " in t:  # "1900-01-02 11:04:52"
+                    return t.split(" ")[1][:5]
+                return t[:5]
+
+            train_departure_time_raw = train_info["departure_time"]
+            train_arrival_time_raw = train_info["arrival_time"]
+
+            train_departure_time = to_hhmm(train_departure_time_raw)
+            train_arrival_time = to_hhmm(train_arrival_time_raw)
+
+            print("@" * 100, train_arrival_time)
+            # Calculate truck_2 arrival time
+            truck_2_travel_time_hours = round(station_to_dest["time"], 2) / 60
+            truck_2_travel_times = self._calculate_travel_time(
+                train_arrival_time,
+                truck_2_travel_time_hours,
+            )
+            truck_2_arrival_time = truck_2_travel_times["arrival_time"]
+
+            truck_route_1 = {
+                "mode": "truck",
+                "vehicle": VEHICLES.get("truck", "truck"),
+                "departure_time": truck_1_departure_time,
+                "arrival_time": truck_1_arrival_time,
+                "origin_name": origin_name,
+                "destination_name": origin_station["Station_Name"],
+                "total_time_minutes": round(origin_to_station["time"], 2),
+                "total_distance_meters": origin_to_station["distance"],
+                "total_distance_km": round(origin_to_station["distance"] / 1000, 2),
+                "co2_emissions_grams": co2_truck_1,
+                "truck_wait_time_minutes": 90,
+                "geometry": truck_geom_1,
+            }
+
+            train_route = {
+                "mode": "train",
+                "vehicle": VEHICLES.get("train", "train"),
+                "departure_time": train_departure_time,
+                "arrival_time": train_arrival_time,
+                "origin_name": origin_station["Station_Name"],
+                "destination_name": dest_station["Station_Name"],
+                "total_time_minutes": round(train_info["time"], 2),
+                "total_distance_meters": train_info["distance"] * 1000,
+                "total_distance_km": round(train_info["distance"], 2),
+                "co2_emissions_grams": co2_train,
+                "geometry": train_geom,
+            }
+
+            truck_route_2 = {
+                "mode": "truck",
+                "vehicle": VEHICLES.get("truck", "truck"),
+                "departure_time": train_arrival_time,
+                "arrival_time": truck_2_arrival_time,
+                "origin_name": dest_station["Station_Name"],
+                "destination_name": destination_name,
+                "total_time_minutes": round(station_to_dest["time"], 2),
+                "total_distance_meters": station_to_dest["distance"],
+                "total_distance_km": round(station_to_dest["distance"] / 1000, 2),
+                "co2_emissions_grams": co2_truck_2,
+                "truck_wait_time_minutes": 90,
+                "geometry": truck_geom_2,
+            }
+
+            return truck_route_1, train_route, truck_route_2
+
+        except Exception as e:
+            print(f"Error calculating train route: {e}")
+            return None, None, None
+
     def _get_truck_routes_to_stations(
         self, origin_point: Point, dest_point: Point, nearest_stations: Dict
     ) -> Optional[Dict]:
@@ -2717,6 +2889,8 @@ class RouteOptimizer:
                 if "Distance_(km)" in route.columns
                 else 0
             )
+            departure_time = route["Departure_Time"].iloc[0]
+            arrival_time = route["Arrival_Time"].iloc[0]
 
             # Convert duration to minutes
             if hasattr(duration, "total_seconds"):
@@ -2724,7 +2898,12 @@ class RouteOptimizer:
             else:
                 time_minutes = 0
 
-            return {"time": time_minutes, "distance": distance}
+            return {
+                "time": time_minutes,
+                "distance": distance,
+                "departure_time": departure_time,
+                "arrival_time": arrival_time,
+            }
 
         return None
 
@@ -2987,21 +3166,13 @@ class RouteOptimizer:
                                 "geometry": geometry,
                                 "properties": convert_numpy_types(
                                     {
-                                        "vehice": route.get("vehice", ""),
+                                        "vehicle": route.get("vehicle", ""),
                                         "departure_time": route.get(
-                                            "departure_time", '00:00'
+                                            "departure_time", "00:00"
                                         ),
-                                        "arrival_time": route.get(
-                                            "arrival_time", '00:00'
-                                        ),
-                                        "total_wait_time_before_departure": feature.get(
-                                            "total_wait_time_before_departure", '00:00'
-                                        ),
+                                        "arrival_time": route.get("arrival_time", "00:00"),
                                         "total_time_minutes": route.get(
                                             "total_time_minutes", 0
-                                        ),
-                                        "total_distance_meters": route.get(
-                                            "total_distance_meters", 0
                                         ),
                                         "total_distance_km": route.get(
                                             "total_distance_km", 0
@@ -3009,11 +3180,9 @@ class RouteOptimizer:
                                         "total_co2_emissions_grams": route.get(
                                             "co2_emissions_grams", 0
                                         ),
-                                        "origin_name": route.get(
-                                            "origin_name", ''
-                                        ),
+                                        "origin_name": route.get("origin_name", ""),
                                         "destination_name": route.get(
-                                            "destination_name", ''
+                                            "destination_name", ""
                                         ),
                                     }
                                 ),
@@ -3028,21 +3197,13 @@ class RouteOptimizer:
                                 },
                                 "properties": convert_numpy_types(
                                     {
-                                        "vehice": route.get("vehice", ""),
+                                        "vehicle": route.get("vehicle", ""),
                                         "departure_time": route.get(
-                                            "departure_time", '00:00'
+                                            "departure_time", "00:00"
                                         ),
-                                        "arrival_time": route.get(
-                                            "arrival_time", '00:00'
-                                        ),
-                                        "total_wait_time_before_departure": feature.get(
-                                            "total_wait_time_before_departure", '00:00'
-                                        ),
+                                        "arrival_time": route.get("arrival_time", "00:00"),
                                         "total_time_minutes": route.get(
                                             "total_time_minutes", 0
-                                        ),
-                                        "total_distance_meters": route.get(
-                                            "total_distance_meters", 0
                                         ),
                                         "total_distance_km": route.get(
                                             "total_distance_km", 0
@@ -3050,17 +3211,15 @@ class RouteOptimizer:
                                         "total_co2_emissions_grams": route.get(
                                             "co2_emissions_grams", 0
                                         ),
-                                        "origin_name": route.get(
-                                            "origin_name", ''
-                                        ),
+                                        "origin_name": route.get("origin_name", ""),
                                         "destination_name": route.get(
-                                            "destination_name", ''
+                                            "destination_name", ""
                                         ),
                                     }
                                 ),
                             }
 
-                        geojson["features"].append(feature)
+                            geojson["features"].append(feature)
 
                     except Exception as e:
                         print(
