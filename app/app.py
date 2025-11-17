@@ -15,6 +15,7 @@ from constant import *
 import globals
 from helper import create_response
 
+
 # =========================
 # 環境変数
 # =========================
@@ -63,6 +64,7 @@ POOL: psycopg2.pool.SimpleConnectionPool = psycopg2.pool.SimpleConnectionPool(
     password=settings.PGPASSWORD,
 )
 
+
 def sql_one(query: str, params: Tuple[Any, ...]) -> Optional[Dict[str, Any]]:
     conn = POOL.getconn()
     try:
@@ -76,6 +78,7 @@ def sql_one(query: str, params: Tuple[Any, ...]) -> Optional[Dict[str, Any]]:
             return {c: v for c, v in zip(cols, row)}
     finally:
         POOL.putconn(conn)
+
 
 def sql_all(query: str, params: Tuple[Any, ...]) -> Optional[Dict[str, Any]]:
     conn = POOL.getconn()
@@ -93,6 +96,7 @@ def sql_all(query: str, params: Tuple[Any, ...]) -> Optional[Dict[str, Any]]:
             return result
     finally:
         POOL.putconn(conn)
+
 
 # =========================
 # 入出力スキーマ
@@ -112,10 +116,12 @@ class MultimodalBody(BaseModel):
     departure_hour: int
     weight_tons: float
 
+
 # =========================
 # FastAPI
 # =========================
 app = FastAPI(title="Multimodal Truck/Train/Ship Router (FastAPI)")
+
 
 @app.get("/health")
 def health():
@@ -144,30 +150,34 @@ def multimodal_route(payload: MultimodalBody):
             }
             summary = create_response(origin_name, origin_lat, origin_lon, destination_name, destination_lat, destination_lon, results)
 
-        departure_hour = payload.departure_hour if payload.departure_hour is not None else 0
+        departure_hour = (
+            payload.departure_hour if payload.departure_hour is not None else 0
+        )
 
         data_folder_path = FOLDER_DATA
-        criteria = 'fastest'
+        criteria = "fastest"
         db_config = {
-            'host': settings.PGHOST,
-            'port': settings.PGPORT,
-            'database': settings.PGDATABASE,
-            'user': settings.PGUSER,
-            'password': settings.PGPASSWORD
+            "host": settings.PGHOST,
+            "port": settings.PGPORT,
+            "database": settings.PGDATABASE,
+            "user": settings.PGUSER,
+            "password": settings.PGPASSWORD,
         }
         optimizer = RouteOptimizer(data_folder_path, db_config)
 
         # Find route with automatic transfer detection
         results = optimizer.find_route(
-            origin_lat, origin_lon, 
-            destination_lat, destination_lon,
+            origin_lat,
+            origin_lon,
+            destination_lat,
+            destination_lon,
             origin_name,
             destination_name,
             departure_hour,
             weight_tons,mode,
             enable_transfer=True,  # Automatically enabled
             max_transfers=max_transfers,
-            show_all=show_all
+            show_all=show_all,
         )
 
         if 'isError' in results and results.get('isError'):
@@ -257,4 +267,5 @@ def multimodal_route(payload: MultimodalBody):
 # 直接起動用
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run("app:app", host="0.0.0.0", port=settings.PORT, reload=True)
