@@ -1841,15 +1841,23 @@ class RouteOptimizer:
                 input_departure_hour,
                 truck_1_travel_time_hours,
             )
+            truck_1_departure_time = truck_1_travel_times["departure_time"]
+            truck_1_arrival_time = truck_1_travel_times["arrival_time"]
 
             # Calculate train arrival time
-            train_travel_time_hours = round(train_info["time"], 2) / 60
-            train_travel_times = self._calculate_travel_time(
-                truck_1_arrival_time,
-                train_travel_time_hours,
-            )
-            train_arrival_time = train_travel_times["arrival_time"]
+            def to_hhmm(t):
+                t = str(t)
+                if " " in t:  # "1900-01-02 11:04:52"
+                    return t.split(" ")[1][:5]
+                return t[:5]
 
+            train_departure_time_raw = train_info["departure_time"]
+            train_arrival_time_raw = train_info["arrival_time"]
+
+            train_departure_time = to_hhmm(train_departure_time_raw)
+            train_arrival_time = to_hhmm(train_arrival_time_raw)
+
+            print("@" * 100, train_arrival_time)
             # Calculate truck_2 arrival time
             truck_2_travel_time_hours = round(station_to_dest["time"], 2) / 60
             truck_2_travel_times = self._calculate_travel_time(
@@ -1861,27 +1869,28 @@ class RouteOptimizer:
             truck_route_1 = {
                 "mode": "truck",
                 "vehicle": VEHICLES.get("truck", "truck"),
-                "departure_time": input_departure_hour,
+                "departure_time": truck_1_departure_time,
                 "arrival_time": truck_1_arrival_time,
                 "origin_name": origin_name,
                 "destination_name": origin_station["Station_Name"],
-                "total_time_minutes": origin_to_station["time"],
+                "total_time_minutes": round(origin_to_station["time"], 2),
                 "total_distance_meters": origin_to_station["distance"],
-                "total_distance_km": origin_to_station["distance"] / 1000,
+                "total_distance_km": round(origin_to_station["distance"] / 1000, 2),
                 "co2_emissions_grams": co2_truck_1,
+                "truck_wait_time_minutes": 90,
                 "geometry": truck_geom_1,
             }
 
             train_route = {
                 "mode": "train",
                 "vehicle": VEHICLES.get("train", "train"),
-                "departure_time": truck_1_arrival_time,
+                "departure_time": train_departure_time,
                 "arrival_time": train_arrival_time,
                 "origin_name": origin_station["Station_Name"],
                 "destination_name": dest_station["Station_Name"],
-                "total_time_minutes": train_info["time"],
+                "total_time_minutes": round(train_info["time"], 2),
                 "total_distance_meters": train_info["distance"] * 1000,
-                "total_distance_km": train_info["distance"],
+                "total_distance_km": round(train_info["distance"], 2),
                 "co2_emissions_grams": co2_train,
                 "geometry": train_geom,
             }
@@ -1893,10 +1902,11 @@ class RouteOptimizer:
                 "arrival_time": truck_2_arrival_time,
                 "origin_name": dest_station["Station_Name"],
                 "destination_name": destination_name,
-                "total_time_minutes": station_to_dest["time"],
+                "total_time_minutes": round(station_to_dest["time"], 2),
                 "total_distance_meters": station_to_dest["distance"],
-                "total_distance_km": station_to_dest["distance"] / 1000,
+                "total_distance_km": round(station_to_dest["distance"] / 1000, 2),
                 "co2_emissions_grams": co2_truck_2,
+                "truck_wait_time_minutes": 90,
                 "geometry": truck_geom_2,
             }
 
