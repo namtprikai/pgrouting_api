@@ -5,7 +5,7 @@ Optimizes multimodal transportation routes (truck, train, ship)
 
 import geopandas as gpd
 import pandas as pd
-from shapely.geometry import Point, LineString, mapping
+from shapely.geometry import Point, LineString
 from datetime import timedelta
 import pyproj
 from typing import Dict, List, Optional, Tuple
@@ -13,8 +13,8 @@ import numpy as np
 import json
 from shapely import wkt
 import math
-import heapq
-from shapely.ops import linemerge
+
+from decoratorr import timeit
 
 
 from helper import (
@@ -31,7 +31,6 @@ try:
 except ImportError:
     PSYCOPG2_AVAILABLE = False
 
-from decoratorr import timeit
 
 class RouteOptimizer:
     """
@@ -3493,7 +3492,7 @@ class RouteOptimizer:
         finally:
             self.db_pool.putconn(conn)
 
-    @timeit("Database Query All 3489 ")
+    @timeit("Database Query All")
     def _db_query_all(self, query: str, params: tuple) -> Optional[List[Dict]]:
         """Execute a query and return all results"""
         if not self.db_pool:
@@ -3535,7 +3534,6 @@ class RouteOptimizer:
         sql = "SELECT component FROM jpn_components WHERE node IN (%s, %s)"
         return self._db_query_all(sql, (start_node, end_node))
 
-    # 5s -> 6s : cached dc 1 cai, giam dc 5s, gốc, chậm tại vì dùng function
     @timeit("Route Truck MM")
     def _route_truck_mm(
         self,
@@ -3545,9 +3543,9 @@ class RouteOptimizer:
         d_lat: float,
         toll_per_km: float = 30.0,
     ) -> Optional[Dict]:
-        """Get truck route from database using route_truck_mm function - cached"""
+        """Get truck route using exact same logic as original SQL function but in Python"""
 
-        # Tạo cache key từ các tham số đầu vào
+        # 1️⃣ Cache key
         cache_key = (
             round(o_lon, 6),
             round(o_lat, 6),
@@ -3555,514 +3553,203 @@ class RouteOptimizer:
             round(d_lat, 6),
             round(toll_per_km, 2),
         )
-
-        # Nếu đã có trong cache thì trả về luôn
         if cache_key in self._route_cache:
             return self._route_cache[cache_key]
 
-        # hàm slq
-        result = self._db_query_one(
-            """
-            SELECT geom_geojson, distance_km, travel_time_h, motorway_km, toll_estimate_yen,
-                entry_ic_name, entry_ic_lon, entry_ic_lat,
-                exit_ic_name,  exit_ic_lon,  exit_ic_lat
-            FROM route_truck_mm(%s, %s, %s, %s, %s)
-            """,
-            (o_lon, o_lat, d_lon, d_lat, toll_per_km),
-        )
+        # 2️⃣ Nearest nodes - EXACTLY like original
+        src_node = self._db_query_one("SELECT nearest_node_id(%s, %s) as nid", (o_lon, o_lat))
+        dst_node = self._db_query_one("SELECT nearest_node_id(%s, %s) as nid", (d_lon, d_lat))
         
-        if not result or not result.get("geom_geojson"):
+        if not src_node or not dst_node or src_node["nid"] is None or dst_node["nid"] is None:
+            return None
+        
+        src_id = src_node["nid"]
+        dst_id = dst_node["nid"]
+
+        # 3️⃣ Tạo bounding box với buffer
+        buffer_degree = 0.3  # Điều chỉnh theo nhu cầu (~33km)
+        min_lon = min(o_lon, d_lon) - buffer_degree
+        max_lon = max(o_lon, d_lon) + buffer_degree  
+        min_lat = min(o_lat, d_lat) - buffer_degree
+        max_lat = max(o_lat, d_lat) + buffer_degree
+
+        # 4️⃣ Get routing result using pgr_bdAstar với SPATIAL FILTER
+        route_edges = self._db_query_all(
+            """
+            SELECT * FROM pgr_bdAstar(
+                $sql$
+                SELECT 
+                    gid AS id, source, target, cost_s AS cost, reverse_cost,   
+                    ST_X(ST_StartPoint(geom)) AS x1, ST_Y(ST_StartPoint(geom)) AS y1,
+                    ST_X(ST_EndPoint(geom)) AS x2, ST_Y(ST_EndPoint(geom)) AS y2,
+                    length_m, highway, geom
+                FROM jpn_ways
+                WHERE NOT blocked
+                AND geom && ST_Expand(ST_MakeEnvelope(%s, %s, %s, %s, 4326), %s)
+                $sql$, 
+                %s, %s, directed := true
+            )
+            ORDER BY seq
+            """,
+            (min_lon, min_lat, max_lon, max_lat, buffer_degree, src_id, dst_id)
+        )
+
+        # Fallback nếu không tìm thấy route với spatial filter
+        if not route_edges:
+            route_edges = self._db_query_all(
+                """
+                SELECT * FROM pgr_bdAstar(
+                    $$
+                    SELECT 
+                        gid AS id, source, target, cost_s AS cost, reverse_cost,   
+                        ST_X(ST_StartPoint(geom)) AS x1, ST_Y(ST_StartPoint(geom)) AS y1,
+                        ST_X(ST_EndPoint(geom)) AS x2, ST_Y(ST_EndPoint(geom)) AS y2,
+                        length_m, highway, geom
+                    FROM jpn_ways
+                    WHERE NOT blocked
+                    $$, %s, %s, directed := true
+                )
+                ORDER BY seq
+                """,
+                (src_id, dst_id)
+            )
+
+        if not route_edges:
             return None
 
+        # 5️⃣ Get detailed edge information - SAME LOGIC AS ORIGINAL seg CTE
+        edge_ids = [str(r["edge"]) for r in route_edges]
+        
+        if not edge_ids:
+            return None
+            
+        edge_ids_str = ",".join(edge_ids)
+        
+        edges_detail = self._db_query_all(
+            f"""
+            SELECT 
+                gid AS id, source, target,
+                cost_s,
+                CASE 
+                    WHEN oneway = 'YES' THEN 1e15
+                    WHEN oneway = 'NO' THEN cost_s
+                    WHEN oneway = 'UNKNOWN' THEN cost_s
+                    WHEN oneway = 'REVERSIBLE' THEN cost_s
+                    ELSE cost_s
+                END AS reverse_cost,
+                length_m, highway, geom, maxspeed_forward
+            FROM jpn_ways
+            WHERE gid IN ({edge_ids_str})
+            AND NOT blocked
+            ORDER BY array_position(ARRAY[{edge_ids_str}]::bigint[], gid)
+            """,
+            ()
+        )
+
+        if not edges_detail:
+            return None
+
+        # 6️⃣ Merge geometry và tính toán metrics - SAME AS ORIGINAL
+        geoms = [e["geom"] for e in edges_detail]
+        
+        # Merge geometries (equivalent to ST_LineMerge(ST_Union(geom)))
+        merged_geom = self._db_query_one(
+            "SELECT ST_AsGeoJSON(ST_LineMerge(ST_Union(geom))) AS gj FROM unnest(%s::geometry[]) AS geom",
+            (geoms,)
+        )
+        
+        if not merged_geom or not merged_geom["gj"]:
+            return None
+
+        # Compute metrics - EXACTLY like original
+        distance_km = sum(e["length_m"] for e in edges_detail) / 1000.0
+        
+        def default_speed(highway: str) -> float:
+            if highway in ('motorway','motorway_link'): return 120.0
+            if highway in ('trunk','trunk_link'): return 100.0
+            if highway in ('primary','primary_link'): return 80.0
+            if highway in ('secondary','secondary_link'): return 60.0
+            if highway in ('tertiary','tertiary_link'): return 40.0
+            return 30.0
+
+        travel_time_h = 0.0
+        motorway_km = 0.0
+
+        for edge in edges_detail:
+            length_m = edge["length_m"]
+            highway = edge["highway"]
+            maxspeed = edge["maxspeed_forward"]
+            
+            # EXACTLY like original: COALESCE(NULLIF(maxspeed_forward, null), default_speed)
+            speed = maxspeed if maxspeed is not None else default_speed(highway)
+            travel_time_h += length_m / (speed * 1000.0)
+            
+            if highway in ('motorway', 'motorway_link'):
+                motorway_km += length_m / 1000.0
+
+        toll_estimate_yen = round(motorway_km * toll_per_km)
+
+        # 7️⃣ Find entry/exit IC - SAME AS ORIGINAL
+        # Get motorway edges in sequence order
+        motorway_edges = [e for e in edges_detail if e["highway"] in ('motorway', 'motorway_link')]
+        
+        if motorway_edges:
+            first_motorway = motorway_edges[0]
+            last_motorway = motorway_edges[-1]
+            
+            # Get start point of first motorway edge and end point of last motorway edge
+            entry_point = self._db_query_one(
+                "SELECT ST_StartPoint(%s) as pt", (first_motorway["geom"],)
+            )
+            exit_point = self._db_query_one(
+                "SELECT ST_EndPoint(%s) as pt", (last_motorway["geom"],)
+            )
+            
+            entry_ic = self._db_query_one(
+                """
+                SELECT name, lon, lat
+                FROM motorway_ic
+                ORDER BY ST_SetSRID(ST_MakePoint(lon,lat),4326) <-> %s
+                LIMIT 1
+                """,
+                (entry_point["pt"],)
+            ) if entry_point else None
+            
+            exit_ic = self._db_query_one(
+                """
+                SELECT name, lon, lat
+                FROM motorway_ic
+                ORDER BY ST_SetSRID(ST_MakePoint(lon,lat),4326) <-> %s
+                LIMIT 1
+                """,
+                (exit_point["pt"],)
+            ) if exit_point else None
+        else:
+            entry_ic = None
+            exit_ic = None
+
+        # 8️⃣ Build result - SAME STRUCTURE AS ORIGINAL
         route = {
-            "geometry": json.loads(result["geom_geojson"]),
-            "distance_km": float(result["distance_km"]),
-            "travel_time_h": float(result["travel_time_h"]),
-            "motorway_km": float(result["motorway_km"]),
-            "toll_estimate_yen": (
-                float(result["toll_estimate_yen"])
-                if result["toll_estimate_yen"] is not None
-                else None
-            ),
-            "entry_ic": (
-                {
-                    "name": result["entry_ic_name"],
-                    "lon": result["entry_ic_lon"],
-                    "lat": result["entry_ic_lat"],
-                }
-                if result.get("entry_ic_name") is not None
-                else None
-            ),
-            "exit_ic": (
-                {
-                    "name": result["exit_ic_name"],
-                    "lon": result["exit_ic_lon"],
-                    "lat": result["exit_ic_lat"],
-                }
-                if result.get("exit_ic_name") is not None
-                else None
-            ),
+            "geometry": json.loads(merged_geom["gj"]),
+            "distance_km": distance_km,
+            "travel_time_h": travel_time_h,
+            "motorway_km": motorway_km,
+            "toll_estimate_yen": toll_estimate_yen,
+            "entry_ic": {
+                "name": entry_ic["name"],
+                "lon": entry_ic["lon"],
+                "lat": entry_ic["lat"]
+            } if entry_ic else None,
+            "exit_ic": {
+                "name": exit_ic["name"], 
+                "lon": exit_ic["lon"],
+                "lat": exit_ic["lat"]
+            } if exit_ic else None,
         }
 
         self._route_cache[cache_key] = route
         return route
-    
-    # 1 nhanh hơn nhưng rối
-    # @timeit("Route Truck MM")
-    # def _route_truck_mm(
-    #     self,
-    #     o_lon: float,
-    #     o_lat: float,
-    #     d_lon: float,
-    #     d_lat: float,
-    #     toll_per_km: float = 30.0,
-    # ) -> Optional[Dict]:
-    #     """Get truck route using DB tables + Python Dijkstra/A*, cached."""
 
-    #     # 1. Cache key
-    #     cache_key = (
-    #         round(o_lon, 6),
-    #         round(o_lat, 6),
-    #         round(d_lon, 6),
-    #         round(d_lat, 6),
-    #         round(toll_per_km, 2),
-    #     )
-    #     if cache_key in self._route_cache:
-    #         return self._route_cache[cache_key]
-
-    #     # 2. Nearest nodes
-    #     row = self._db_query_one(
-    #         "SELECT nid FROM jpn_nodes ORDER BY geom <-> ST_SetSRID(ST_MakePoint(%s,%s),4326) LIMIT 1",
-    #         (o_lon, o_lat),
-    #     )
-    #     if not row:
-    #         return None
-    #     src_node = row["nid"]
-
-    #     row = self._db_query_one(
-    #         "SELECT nid FROM jpn_nodes ORDER BY geom <-> ST_SetSRID(ST_MakePoint(%s,%s),4326) LIMIT 1",
-    #         (d_lon, d_lat),
-    #     )
-    #     if not row:
-    #         return None
-    #     dst_node = row["nid"]
-
-    #     # 3. Get ways within bounding box + small buffer
-    #     min_lon, max_lon = min(o_lon, d_lon), max(o_lon, d_lon)
-    #     min_lat, max_lat = min(o_lat, d_lat), max(o_lat, d_lat)
-
-    #     ways = self._db_query_all(
-    #         """
-    #         SELECT gid, source, target, cost_s, reverse_cost, length_m, maxspeed_forward, highway,
-    #             ST_AsText(geom) AS geom_wkt
-    #         FROM jpn_ways
-    #         WHERE NOT blocked
-    #         AND geom && ST_Expand(ST_MakeEnvelope(%s,%s,%s,%s,4326), 0.05)
-    #         """,
-    #         (min_lon, min_lat, max_lon, max_lat),
-    #     )
-    #     if not ways:
-    #         return None
-
-    #     # 4. Build adjacency list
-    #     adj: Dict[int, List[Tuple[int, float, int, str]]] = {}
-    #     edge_geom: Dict[int, LineString] = {}
-    #     edge_highway: Dict[int, str] = {}
-    #     edge_length: Dict[int, float] = {}
-
-    #     for w in ways:
-    #         try:
-    #             geom = wkt.loads(w["geom_wkt"])
-    #         except:
-    #             continue  # skip invalid WKT
-    #         edge_geom[w["gid"]] = geom
-    #         edge_highway[w["gid"]] = w["highway"]
-    #         edge_length[w["gid"]] = w["length_m"]
-
-    #         adj.setdefault(w["source"], []).append((w["target"], w["cost_s"], w["gid"], w["highway"]))
-    #         if w["reverse_cost"] < 1e15:
-    #             adj.setdefault(w["target"], []).append((w["source"], w["reverse_cost"], w["gid"], w["highway"]))
-
-    #     # 5. Dijkstra
-    #     heap = [(0, src_node, [])]  # (cost, node, path_edges)
-    #     visited = {}
-    #     path_edges: List[int] = []
-
-    #     while heap:
-    #         cost, node, path = heapq.heappop(heap)
-    #         if node in visited:
-    #             continue
-    #         visited[node] = cost
-    #         path_edges = path
-    #         if node == dst_node:
-    #             break
-    #         for neigh, c, gid, hw in adj.get(node, []):
-    #             if neigh not in visited:
-    #                 heapq.heappush(heap, (cost + c, neigh, path + [gid]))
-
-    #     if not path_edges:
-    #         return None
-
-    #     # 6. Aggregate geometry
-    #     geom_lines = [edge_geom[gid] for gid in path_edges]
-    #     full_line = LineString([pt for line in geom_lines for pt in line.coords])
-    #     geom_geojson = mapping(full_line)
-
-    #     # 7. Distance, travel_time, motorway_km
-    #     distance_km = sum(edge_length[gid] for gid in path_edges) / 1000
-    #     travel_time_h = 0
-    #     motorway_km = 0
-    #     gid_to_w = {w["gid"]: w for w in ways}
-
-    #     for gid in path_edges:
-    #         l = edge_length[gid]
-    #         w = gid_to_w[gid]
-    #         maxspeed = w["maxspeed_forward"]
-    #         if not maxspeed:
-    #             hw = edge_highway[gid]
-    #             if hw.startswith("motorway"):
-    #                 maxspeed = 120
-    #             elif hw.startswith("trunk"):
-    #                 maxspeed = 100
-    #             elif hw.startswith("primary"):
-    #                 maxspeed = 80
-    #             elif hw.startswith("secondary"):
-    #                 maxspeed = 60
-    #             elif hw.startswith("tertiary"):
-    #                 maxspeed = 40
-    #             else:
-    #                 maxspeed = 30
-    #         travel_time_h += l / (maxspeed * 1000)
-    #         if edge_highway[gid].startswith("motorway"):
-    #             motorway_km += l / 1000
-
-    #     toll_estimate_yen = round(motorway_km * toll_per_km)
-
-    #     # 8. Entry / Exit IC
-    #     entry_pt = Point(full_line.coords[0])
-    #     exit_pt = Point(full_line.coords[-1])
-
-    #     entry_ic = self._db_query_one(
-    #         """
-    #         SELECT name, lon, lat
-    #         FROM motorway_ic
-    #         ORDER BY ST_SetSRID(ST_MakePoint(lon,lat),4326) <-> %s
-    #         LIMIT 1
-    #         """,
-    #         (entry_pt,),
-    #     )
-    #     exit_ic = self._db_query_one(
-    #         """
-    #         SELECT name, lon, lat
-    #         FROM motorway_ic
-    #         ORDER BY ST_SetSRID(ST_MakePoint(lon,lat),4326) <-> %s
-    #         LIMIT 1
-    #         """,
-    #         (exit_pt,),
-    #     )
-
-    #     # 9. Build result
-    #     route = {
-    #         "geometry": geom_geojson,
-    #         "distance_km": distance_km,
-    #         "travel_time_h": travel_time_h,
-    #         "motorway_km": motorway_km,
-    #         "toll_estimate_yen": toll_estimate_yen,
-    #         "entry_ic": entry_ic,
-    #         "exit_ic": exit_ic,
-    #     }
-
-    #     self._route_cache[cache_key] = route
-    #     return route
-    
-    # 2 nhanh nhất nhưng ko bt vì sao truck lại thẳng
-    # @timeit("Route Truck MM")
-    # def _route_truck_mm(
-    #     self,
-    #     o_lon: Point,
-    #     o_lat: Point,
-    #     d_lon: Point,
-    #     d_lat: Point,
-    #     toll_per_km: float = 30.0,
-    # ) -> Optional[Dict]:
-    #     """Get truck route using DB tables + Python Dijkstra/A*, cached and merged geometry."""
-
-    #     # 1️⃣ Cache key
-    #     cache_key = (
-    #         round(o_lon, 6),
-    #         round(o_lat, 6),
-    #         round(d_lon, 6),
-    #         round(d_lat, 6),
-    #         round(toll_per_km, 2),
-    #     )
-    #     if cache_key in self._route_cache:
-    #         return self._route_cache[cache_key]
-
-    #     # 2️⃣ Nearest nodes
-    #     src_node_row = self._nearest_node_id(o_lon, o_lat)
-    #     dst_node_row = self._nearest_node_id(d_lon, d_lat)
-    #     if not src_node_row or not dst_node_row or "nid" not in src_node_row or "nid" not in dst_node_row:
-    #         return None
-    #     src_node = src_node_row["nid"]
-    #     dst_node = dst_node_row["nid"]
-
-    #     # 3️⃣ Get ways in bounding box
-    #     min_lon, max_lon = min(o_lon, d_lon), max(o_lon, d_lon)
-    #     min_lat, max_lat = min(o_lat, d_lat), max(o_lat, d_lat)
-
-    #     ways = self._db_query_all(
-    #         """
-    #         SELECT gid, source, target, cost_s, reverse_cost, length_m, maxspeed_forward, highway,
-    #             ST_AsText(geom) AS geom_wkt
-    #         FROM jpn_ways
-    #         WHERE NOT blocked
-    #         AND geom && ST_Expand(ST_MakeEnvelope(%s,%s,%s,%s,4326), 0.05)
-    #         """,
-    #         (min_lon, min_lat, max_lon, max_lat),
-    #     )
-    #     if not ways:
-    #         return None
-
-    #     # 4️⃣ Build adjacency list and edge dicts
-    #     adj: Dict[int, List[Tuple[int, float, int, str]]] = {}
-    #     edge_geom: Dict[int, LineString] = {}
-    #     edge_highway: Dict[int, str] = {}
-    #     edge_length: Dict[int, float] = {}
-    #     gid_to_w = {}
-
-    #     for w in ways:
-    #         try:
-    #             geom = wkt.loads(w["geom_wkt"])
-    #         except:
-    #             continue 
-    #         edge_geom[w["gid"]] = geom
-    #         edge_highway[w["gid"]] = w["highway"]
-    #         edge_length[w["gid"]] = w["length_m"]
-    #         gid_to_w[w["gid"]] = w
-
-    #         adj.setdefault(w["source"], []).append((w["target"], w["cost_s"], w["gid"], w["highway"]))
-    #         if w["reverse_cost"] < 1e15:
-    #             adj.setdefault(w["target"], []).append((w["source"], w["reverse_cost"], w["gid"], w["highway"]))
-
-    #     # 5️⃣ Dijkstra
-    #     heap = [(0, src_node, [])]  # (cost, node, path_edges)
-    #     visited = {}
-    #     path_edges: List[int] = []
-
-    #     while heap:
-    #         cost, node, path = heapq.heappop(heap)
-    #         if node in visited:
-    #             continue
-    #         visited[node] = cost
-    #         path_edges = path
-    #         if node == dst_node:
-    #             break
-    #         for neigh, c, gid, hw in adj.get(node, []):
-    #             if neigh not in visited:
-    #                 heapq.heappush(heap, (cost + c, neigh, path + [gid]))
-
-    #     if not path_edges:
-    #         return None
-
-    #     # 6️⃣ Merge geometry (ST_LineMerge equivalent)
-    #     geom_lines = [edge_geom[gid] for gid in path_edges]
-    #     full_line = linemerge(geom_lines)
-    #     geom_geojson = mapping(full_line)
-
-    #     # 7️⃣ Compute distance, travel_time, motorway_km
-    #     distance_km = sum(edge_length[gid] for gid in path_edges) / 1000
-    #     travel_time_h = 0
-    #     motorway_km = 0
-
-    #     def default_speed(hw: str) -> float:
-    #         if hw.startswith("motorway"): return 120
-    #         if hw.startswith("trunk"): return 100
-    #         if hw.startswith("primary"): return 80
-    #         if hw.startswith("secondary"): return 60
-    #         if hw.startswith("tertiary"): return 40
-    #         return 30
-
-    #     for gid in path_edges:
-    #         seg = gid_to_w[gid]
-    #         l = edge_length[gid]
-    #         maxspeed = seg["maxspeed_forward"] or default_speed(seg["highway"])
-    #         travel_time_h += l / (maxspeed * 1000)
-    #         if seg["highway"] in ("motorway", "motorway_link"):
-    #             motorway_km += l / 1000
-
-    #     toll_estimate_yen = round(motorway_km * toll_per_km)
-
-    #     # 8️⃣ Entry / Exit IC
-    #     entry_pt = Point(full_line.coords[0])
-    #     exit_pt = Point(full_line.coords[-1])
-
-    #     entry_ic = self._db_query_one(
-    #         """
-    #         SELECT name, lon, lat
-    #         FROM motorway_ic
-    #         ORDER BY ST_SetSRID(ST_MakePoint(lon,lat),4326) <-> %s
-    #         LIMIT 1
-    #         """,
-    #         (entry_pt,),
-    #     )
-    #     exit_ic = self._db_query_one(
-    #         """
-    #         SELECT name, lon, lat
-    #         FROM motorway_ic
-    #         ORDER BY ST_SetSRID(ST_MakePoint(lon,lat),4326) <-> %s
-    #         LIMIT 1
-    #         """,
-    #         (exit_pt,),
-    #     )
-
-    #     # 9️⃣ Build result
-    #     route = {
-    #         "geometry": geom_geojson,
-    #         "distance_km": distance_km,
-    #         "travel_time_h": travel_time_h,
-    #         "motorway_km": motorway_km,
-    #         "toll_estimate_yen": toll_estimate_yen,
-    #         "entry_ic": entry_ic,
-    #         "exit_ic": exit_ic,
-    #     }
-
-    #     self._route_cache[cache_key] = route
-    #     return route
-    
-    #     # nhanh nhất nhưng ko bt vì sao truck lại ko thực tế vì tính A* ngoài python
-    
-    # test 2
-    # @timeit("Route Truck MM")
-    # def _route_truck_mm(
-    #     self,
-    #     o_lon: float,
-    #     o_lat: float,
-    #     d_lon: float,
-    #     d_lat: float,
-    #     toll_per_km: float = 30.0,
-    # ) -> Optional[Dict]:
-    #     """Get truck route using DB tables + cached geometry, distance, travel_time, motorway_km, toll."""
-
-    #     # 1️⃣ Cache key
-    #     cache_key = (
-    #         round(o_lon, 6),
-    #         round(o_lat, 6),
-    #         round(d_lon, 6),
-    #         round(d_lat, 6),
-    #         round(toll_per_km, 2),
-    #     )
-    #     if cache_key in self._route_cache:
-    #         return self._route_cache[cache_key]
-
-    #     # 2️⃣ Find nearest nodes
-    #     src_node_row = self._nearest_node_id(o_lon, o_lat)
-    #     dst_node_row = self._nearest_node_id(d_lon, d_lat)
-    #     if not src_node_row or not dst_node_row or "nid" not in src_node_row or "nid" not in dst_node_row:
-    #         return None
-    #     src_node = src_node_row["nid"]
-    #     dst_node = dst_node_row["nid"]
-
-    #     # 3️⃣ Call SQL to compute merged route geometry + metrics
-    #     sql = """
-    #     WITH r AS (
-    #         SELECT * FROM pgr_bdAstar(
-    #             $q$
-    #             SELECT gid AS id, source, target, cost_s AS cost, reverse_cost, geom
-    #             FROM jpn_ways
-    #             WHERE NOT blocked
-    #             $q$,
-    #             %s, %s, directed := true
-    #         )
-    #     ),
-    #     seg AS (
-    #         SELECT e.*, r.seq
-    #         FROM r
-    #         JOIN jpn_ways e ON e.gid = r.edge
-    #         ORDER BY r.seq
-    #     ),
-    #     agg AS (
-    #         SELECT
-    #             ST_AsGeoJSON(ST_MakeLine(seg.geom ORDER BY seq)) AS geom_geojson,
-    #             SUM(seg.length_m)/1000.0 AS distance_km,
-    #             SUM(
-    #                 seg.length_m / (
-    #                     COALESCE(seg.maxspeed_forward, 
-    #                         CASE
-    #                             WHEN seg.highway IN ('motorway','motorway_link') THEN 120.0
-    #                             WHEN seg.highway IN ('trunk','trunk_link') THEN 100.0
-    #                             WHEN seg.highway IN ('primary','primary_link') THEN 80.0
-    #                             WHEN seg.highway IN ('secondary','secondary_link') THEN 60.0
-    #                             WHEN seg.highway IN ('tertiary','tertiary_link') THEN 40.0
-    #                             ELSE 30.0
-    #                         END
-    #                     ) * 1000.0
-    #                 )
-    #             ) AS travel_time_h,
-    #             SUM(CASE WHEN seg.highway IN ('motorway','motorway_link') THEN seg.length_m ELSE 0 END)/1000.0 AS motorway_km
-    #         FROM seg
-    #     ),
-    #     mw AS (
-    #         SELECT * FROM seg WHERE highway IN ('motorway','motorway_link') ORDER BY seq
-    #     ),
-    #     entry_edge AS (SELECT * FROM mw ORDER BY seq ASC LIMIT 1),
-    #     exit_edge  AS (SELECT * FROM mw ORDER BY seq DESC LIMIT 1),
-    #     entry_pt AS (SELECT ST_StartPoint(geom) AS pt FROM entry_edge),
-    #     exit_pt AS (SELECT ST_EndPoint(geom) AS pt FROM exit_edge),
-    #     entry_ic AS (
-    #         SELECT name, lon, lat
-    #         FROM motorway_ic
-    #         ORDER BY ST_SetSRID(ST_MakePoint(lon,lat),4326) <-> (SELECT pt FROM entry_pt)
-    #         LIMIT 1
-    #     ),
-    #     exit_ic AS (
-    #         SELECT name, lon, lat
-    #         FROM motorway_ic
-    #         ORDER BY ST_SetSRID(ST_MakePoint(lon,lat),4326) <-> (SELECT pt FROM exit_pt)
-    #         LIMIT 1
-    #     )
-    #     SELECT
-    #         agg.geom_geojson,
-    #         COALESCE(agg.distance_km,0) AS distance_km,
-    #         COALESCE(agg.travel_time_h,0) AS travel_time_h,
-    #         COALESCE(agg.motorway_km,0) AS motorway_km,
-    #         (COALESCE(ROUND(agg.motorway_km * %s),0))::numeric AS toll_estimate_yen,
-    #         (SELECT name FROM entry_ic) AS entry_ic_name,
-    #         (SELECT lon FROM entry_ic) AS entry_ic_lon,
-    #         (SELECT lat FROM entry_ic) AS entry_ic_lat,
-    #         (SELECT name FROM exit_ic) AS exit_ic_name,
-    #         (SELECT lon FROM exit_ic) AS exit_ic_lon,
-    #         (SELECT lat FROM exit_ic) AS exit_ic_lat
-    #     FROM agg;
-    #     """
-
-    #     agg = self._db_query_one(sql, (src_node, dst_node, toll_per_km))
-    #     if not agg:
-    #         return None
-
-    #     # 4️⃣ Build result dictionary
-    #     route = {
-    #         "geometry": json.loads(agg["geom_geojson"]),
-    #         "distance_km": float(agg["distance_km"]),
-    #         "travel_time_h": float(agg["travel_time_h"]),
-    #         "motorway_km": float(agg["motorway_km"]),
-    #         "toll_estimate_yen": float(agg["toll_estimate_yen"]),
-    #         "entry_ic": {
-    #             "name": agg["entry_ic_name"],
-    #             "lon": agg["entry_ic_lon"],
-    #             "lat": agg["entry_ic_lat"],
-    #         },
-    #         "exit_ic": {
-    #             "name": agg["exit_ic_name"],
-    #             "lon": agg["exit_ic_lon"],
-    #             "lat": agg["exit_ic_lat"],
-    #         },
-    #     }
-
-    #     # 5️⃣ Cache
-    #     self._route_cache[cache_key] = route
-    #     return route
-    
-    
     @timeit("Get Truck Route Info from DB")
     def _get_truck_route_info_db(
         self, start_point: Point, end_point: Point, toll_per_km: float = 30.0

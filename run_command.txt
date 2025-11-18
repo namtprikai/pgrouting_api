@@ -1,1 +1,0 @@
-_get_truck_route_info_db
