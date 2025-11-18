@@ -1,1 +1,22 @@
 https://drive.google.com/drive/folders/1KqsHNqitNb_y47mnzoWDpUtBcm8hFDhT?usp=drive_link
+
+
+{
+    "origin_name":"Trạm xe tải Kasai",
+    "origin_lat":31.63787964385961,
+    "origin_lon":130.55383429395047, 
+    "dest_name":"Nhà ga Miyazaki",
+    "dest_lat":43.06422759267114,
+    "dest_lon":141.34891797251345,
+    "mode": "truck_train_ship_train"
+}
+
+{
+    "origin_name":"Trạm xe tải Kasai",
+    "origin_lat":35.64657,
+    "origin_lon":139.8624, 
+    "dest_name":"Nhà ga Miyazaki",
+    "dest_lat":31.9084,
+    "dest_lon":131.4565,
+    "mode": "truck_train_ship_train"
+}

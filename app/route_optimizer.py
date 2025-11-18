@@ -2264,13 +2264,12 @@ class RouteOptimizer:
                         ),
                     ]
                 )
-
         except Exception as e:
             print(f"Error creating combined geometry: {e}")
             # Fallback to simple straight line
             return LineString([(0, 0), (0, 0), (0, 0), (0, 0)])
-
-    @timeit("Truck Routes to Ports")
+        
+    @timeit("Truck Routes to Ports") 
     def _get_truck_routes_to_ports(
         self, origin_point: Point, dest_point: Point, nearest_ports: Dict
     ) -> Optional[Dict]:
@@ -2285,7 +2284,7 @@ class RouteOptimizer:
             port_to_dest = self._get_truck_route_info(
                 Point(dest_port["X"], dest_port["Y"]), dest_point
             )
-
+            
             if origin_to_port and port_to_dest:
                 return {
                     "origin_to_port": origin_to_port,
@@ -2295,7 +2294,6 @@ class RouteOptimizer:
                 }
             else:
                 return None
-
         except Exception as e:
             print(f"Error getting truck routes to ports: {e}")
             return None
