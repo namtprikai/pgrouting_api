@@ -9,7 +9,7 @@ STREET_TYPE = {
 
 FOLDER_DATA = 'data_file'
 
-VEHICES = {
+VEHICLES = {
     'truck': 'Truck',
     'ship': 'Ship',
     'train': 'Train'

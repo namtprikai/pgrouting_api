@@ -1354,7 +1354,7 @@ class RouteOptimizer:
 
                 return {
                     "mode": "truck_only",
-                    "vehice": VEHICES['truck'],
+                    "vehicle": VEHICLES['truck'],
                     "departure_time": departure_time,
                     "arrival_time": arrival_time,
                     "origin_name": origin_name,
@@ -2296,7 +2296,7 @@ class RouteOptimizer:
                         "type": "direct",
                         "route_info": direct_ship,
                         "transfer_ports": [],
-                        "vehice": VEHICES['ship'],
+                        "vehicle": VEHICLES['ship'],
                         "departure_time": direct_ship['departure_time'],
                         "arrival_time": direct_ship['arrival_time'],
                         "origin_name": origin_port["C02_005"],
@@ -2418,7 +2418,7 @@ class RouteOptimizer:
                             },
                             "transfer_ports": [str(transfer_port)],
                             "leg1": {
-                                "vehice": VEHICES['ship'],
+                                "vehicle": VEHICLES['ship'],
                                 "departure_time": leg1['departure_time'],
                                 "arrival_time": leg1['arrival_time'],
                                 "origin_name": origin_port["C02_005"],
@@ -2430,7 +2430,7 @@ class RouteOptimizer:
                                 "co2_emissions_grams": leg1_co2_emissions
                             },
                             "leg2": {
-                                "vehice": VEHICES['ship'],
+                                "vehicle": VEHICLES['ship'],
                                 "departure_time": leg2['departure_time'],
                                 "arrival_time": leg2['arrival_time'],
                                 "origin_name": transfer_port,
@@ -2514,7 +2514,7 @@ class RouteOptimizer:
             features = []
             # ---- Feature 1: Truck (Origin → Origin Port)\
             f1 = {
-                "vehice": VEHICES['truck'],
+                "vehicle": VEHICLES['truck'],
                 "departure_time": truck_routes['origin_to_port_routes']['departure_time'],
                 "arrival_time": truck_routes['origin_to_port_routes']['arrival_time'],
                 "total_wait_time_before_departure": truck_routes['origin_to_port_routes']['total_wait_time_before_departure'],
@@ -2539,7 +2539,7 @@ class RouteOptimizer:
             if transfer_ports:
                 f2_delay = self._calculate_travel_time(ship_route['leg1']['departure_time'], round(ship_route['leg1']['total_time_minutes']/60, 2), True)
                 f2 = {
-                    "vehice": VEHICES['ship'],
+                    "vehicle": VEHICLES['ship'],
                     "departure_time": ship_route['leg1']['departure_time'],
                     "arrival_time": ship_route['leg1']['arrival_time'],
                     "total_wait_time_before_departure": f2_delay['arrival_time'],
@@ -2558,7 +2558,7 @@ class RouteOptimizer:
 
                 f3_delay = self._calculate_travel_time(ship_route['leg2']['departure_time'], round(ship_route['leg2']['total_time_minutes']/60, 2), True)
                 f3 = {
-                    "vehice": VEHICES['ship'],
+                    "vehicle": VEHICLES['ship'],
                     "departure_time": ship_route['leg2']['departure_time'],
                     "arrival_time": ship_route['leg2']['arrival_time'],
                     "total_wait_time_before_departure": f3_delay['arrival_time'],
@@ -2577,7 +2577,7 @@ class RouteOptimizer:
             else:
                 ship_time_wait = self._calculate_travel_time(ship_route['departure_time'], round(ship_route['total_time_minutes']/60, 2), True)
                 f2 = {
-                    "vehice": VEHICES['ship'],
+                    "vehicle": VEHICLES['ship'],
                     "departure_time": ship_route['departure_time'],
                     "arrival_time": ship_route['arrival_time'],
                     "total_wait_time_before_departure": ship_time_wait['arrival_time'],
@@ -2598,7 +2598,7 @@ class RouteOptimizer:
             truck_departure_time = self._calculate_travel_time(ship_arrival_time, truck_routes['port_to_dest_routes']['total_time_minutes'] / 60, False)
             globals.GLOBAL_STATE["arrival_time"] = truck_departure_time['arrival_time']
             f4 = {
-                "vehice": VEHICES['truck'],
+                "vehicle": VEHICLES['truck'],
                 "departure_time": ship_arrival_time,
                 "arrival_time": truck_departure_time['arrival_time'],
                 "origin_name": truck_routes['port_to_dest_routes']['origin_name'],
@@ -3045,12 +3045,12 @@ class RouteOptimizer:
                         # Create feature
                         if isinstance(geometry, dict):
                             # Already GeoJSON
-                            feature = {
+                            new_feature = {
                                 "type": "Feature",
                                 "geometry": geometry,
                                 "properties": convert_numpy_types(
                                     {
-                                        "vehice": feature.get("vehice", ""),
+                                        "vehicle": feature.get("vehicle", ""),
                                         "departure_time": feature.get(
                                             "departure_time", '00:00'
                                         ),
@@ -3080,7 +3080,7 @@ class RouteOptimizer:
                             }
                         else:
                             # Shapely geometry
-                            feature = {
+                            new_feature = {
                                 "type": "Feature",
                                 "geometry": {
                                     "type": geometry.geom_type,
@@ -3088,7 +3088,7 @@ class RouteOptimizer:
                                 },
                                 "properties": convert_numpy_types(
                                     {
-                                        "vehice": feature.get("vehice", ""),
+                                        "vehicle": feature.get("vehicle", ""),
                                         "departure_time": feature.get(
                                             "departure_time", '00:00'
                                         ),
@@ -3117,7 +3117,7 @@ class RouteOptimizer:
                                 ),
                             }
 
-                        geojson["features"].append(feature)
+                        geojson["features"].append(new_feature)
 
                     except Exception as e:
                         print(
@@ -3161,7 +3161,7 @@ class RouteOptimizer:
                         # Create feature
                         if isinstance(geometry, dict):
                             # Already GeoJSON
-                            feature = {
+                            new_feature = {
                                 "type": "Feature",
                                 "geometry": geometry,
                                 "properties": convert_numpy_types(
@@ -3189,7 +3189,7 @@ class RouteOptimizer:
                             }
                         else:
                             # Shapely geometry
-                            feature = {
+                            new_feature = {
                                 "type": "Feature",
                                 "geometry": {
                                     "type": geometry.geom_type,
@@ -3218,8 +3218,8 @@ class RouteOptimizer:
                                     }
                                 ),
                             }
-
-                            geojson["features"].append(feature)
+                        
+                        geojson["features"].append(new_feature)
 
                     except Exception as e:
                         print(

@@ -215,7 +215,6 @@ def multimodal_route(payload: MultimodalBody):
                     # Fallback to all routes if optimal route not found
                     save_results = results
             
-            # print(save_results, 'save_results')
             optimizer.save_results(save_results, 'output/' + file_name)
             print(f"\nResults saved to: output/{file_name}")
             
