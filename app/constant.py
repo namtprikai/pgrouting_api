@@ -14,3 +14,10 @@ VEHICLES = {
     'ship': 'Ship',
     'train': 'Train'
 }
+
+SHIP_SPEED_DEFAULT = 50
+
+MESSAGES = {
+    'no_time_data': "時刻表データがないため、簡易試算となります",
+    'route_not_found': "起点・終点の近隣の港を結ぶ経路が見つかりません"
+}

@@ -216,7 +216,6 @@ def multimodal_route(payload: MultimodalBody):
                     save_results = results
             
             optimizer.save_results(save_results, 'output/' + file_name)
-            print(f"\nResults saved to: output/{file_name}")
             
             geojson = optimizer._convert_to_geojson(save_results)
             if not show_all:
@@ -244,7 +243,7 @@ def multimodal_route(payload: MultimodalBody):
                 'total_distance_meters': data['total_distance_meters'] if 'total_distance_meters' in data and data['total_distance_meters'] else None,
                 'total_co2_emissions_grams': data['co2_emissions_grams'] if 'co2_emissions_grams' in data and data['co2_emissions_grams'] else None,
                 
-                'message': '', #"時刻表データがないため、簡易試算となります"
+                'message': globals.GLOBAL_STATE['warning_message'],
 
                 'geojson': geojson
             }

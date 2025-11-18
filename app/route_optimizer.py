@@ -20,6 +20,7 @@ from helper import (
     build_result_segment,
     linestring_to_geojson_feature,
     extract_linestring,
+    add_hours
 )
 
 try:
@@ -442,7 +443,7 @@ class RouteOptimizer:
                     
                         routes.extend(combined_routes)
                     else:
-                        return {'isError': True, 'data': [], 'message': 'Ship route: ' + nearest_ports['origin_port']["C02_005"] + ' -> ' + nearest_ports['dest_port']["C02_005"] + ' not found.'}
+                        return {'isError': True, 'data': [], 'message': '起点・終点の近隣の港を結ぶ経路が見つかりません'}
                 else:
                     return {'isError': True, 'data': [], 'message': 'Truck route not found'}
 
@@ -2214,6 +2215,7 @@ class RouteOptimizer:
                 origin_travel_time_wait = self._calculate_travel_time(input_departure_hour, round(origin_to_port["time"]/60, 2), True)
                 
                 globals.GLOBAL_STATE["departure_time"] = origin_travel_time['departure_time']
+                globals.GLOBAL_STATE["origin_to_port_time"] = add_hours(origin_travel_time['arrival_time'])
                 
                 origin_to_port_routes = {
                     "departure_time": origin_travel_time['departure_time'],
@@ -2851,9 +2853,15 @@ class RouteOptimizer:
         ]
 
         if not route.empty:
-            route_time = route["Route_Time"].iloc[0]
-            departure_time = route["Departure_Time"].iloc[0]
-            arrival_time = route["Arrival_Time"].iloc[0]
+            # route_time = route["Route_Time"].iloc[0] if route["Route_Time"].iloc[0] else None
+            # departure_time = route["Departure_Time"].iloc[0] if route["Departure_Time"].iloc[0] else globals.GLOBAL_STATE["origin_to_port_time"]
+            # arrival_time = route["Arrival_Time"].iloc[0] if route["Arrival_Time"].iloc[0] else None
+            # speed_upper = route["Speed_Upper_(km/h)"].iloc[0] if route["Speed_Upper_(km/h)"].iloc[0] else SHIP_SPEED_DEFAULT
+
+            route_time = None
+            departure_time = globals.GLOBAL_STATE["origin_to_port_time"]
+            arrival_time = None
+            speed_upper = SHIP_SPEED_DEFAULT
 
             # Calculate distance between ports
             origin_port_data = self.minato_gdf[
@@ -2869,7 +2877,12 @@ class RouteOptimizer:
                     dest_port_data["X"].iloc[0],
                 )
 
-                return {"time": route_time, "distance": distance, 'departure_time': departure_time, 'arrival_time': arrival_time}
+                if not route_time or not arrival_time or not route["Departure_Time"].iloc[0] or not route["Speed_Upper_(km/h)"].iloc[0]:
+                    route_time = (distance / 1000) * 1.5 / speed_upper
+                    arrival_time = add_hours(departure_time, route_time)
+                    globals.GLOBAL_STATE["warning_message"] = MESSAGES['no_time_data']
+
+                return {"time": route_time, "distance": distance * 1.5, 'departure_time': departure_time, 'arrival_time': arrival_time}
 
         return None
 

@@ -2,6 +2,7 @@ from shapely.geometry import LineString, MultiLineString, mapping
 from shapely.ops import linemerge
 import math
 import json
+from datetime import datetime, timedelta
 
 
 def _is_num(x):
@@ -249,3 +250,8 @@ def linestring_to_geojson_feature(geom, props=None, precision=6):
     print("---------------------------------------------------------", "\n")
     return feature
 
+def add_hours(time_str: str, hours: float = 3.0) -> str:
+    # Parse "HH:MM"
+    base_time = datetime.strptime(time_str, "%H:%M")
+    new_time = base_time + timedelta(hours=hours)
+    return new_time.strftime("%H:%M")
