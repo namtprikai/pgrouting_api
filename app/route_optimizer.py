@@ -14,6 +14,7 @@ import json
 from shapely import wkt
 import math
 from constant import *
+import globals
 from helper import (
     build_data_infos,
     build_result_segment,
@@ -1348,6 +1349,9 @@ class RouteOptimizer:
                 departure_time = travel_times['departure_time']
                 arrival_time = travel_times['arrival_time']
 
+                globals.GLOBAL_STATE["departure_time"] = departure_time
+                globals.GLOBAL_STATE["arrival_time"] = arrival_time
+
                 return {
                     "mode": "truck_only",
                     "vehice": VEHICES['truck'],
@@ -2036,10 +2040,13 @@ class RouteOptimizer:
                 origin_co2_emissions = self._calculate_co2_emissions('truck', weight_tons, origin_distance_km)
                 origin_travel_time = self._calculate_travel_time(input_departure_hour, round(origin_to_port["time"]/60, 2), False)
                 origin_travel_time_wait = self._calculate_travel_time(input_departure_hour, round(origin_to_port["time"]/60, 2), True)
+                
+                globals.GLOBAL_STATE["departure_time"] = origin_travel_time['departure_time']
+                
                 origin_to_port_routes = {
                     "departure_time": origin_travel_time['departure_time'],
                     "arrival_time": origin_travel_time['arrival_time'],
-                    "arrival_time_wait": origin_travel_time_wait['arrival_time'],
+                    "total_wait_time_before_departure": origin_travel_time_wait['arrival_time'],
                     "origin_name": origin_name,
                     "destination_name": origin_port["C02_005"],
                     "total_time_minutes": (
@@ -2062,10 +2069,11 @@ class RouteOptimizer:
                 dest_co2_emissions = self._calculate_co2_emissions('truck', weight_tons, dest_distance_km)
                 dest_travel_time = self._calculate_travel_time(input_departure_hour, port_to_dest["time"]/60, False)
                 dest_travel_time_wait = self._calculate_travel_time(input_departure_hour, round(port_to_dest["time"]/60, 2), True)
+                
                 port_to_dest_routes = {
                     "departure_time": dest_travel_time['departure_time'],
                     "arrival_time": dest_travel_time['arrival_time'],
-                    "arrival_time_wait": dest_travel_time_wait['arrival_time'],
+                    "total_wait_time_before_departure": dest_travel_time_wait['arrival_time'],
                     "origin_name": dest_port['C02_005'],
                     "destination_name": destination_name,
                     "total_time_minutes": (
@@ -2337,7 +2345,7 @@ class RouteOptimizer:
                 "vehice": VEHICES['truck'],
                 "departure_time": truck_routes['origin_to_port_routes']['departure_time'],
                 "arrival_time": truck_routes['origin_to_port_routes']['arrival_time'],
-                "arrival_time_wait": truck_routes['origin_to_port_routes']['arrival_time_wait'],
+                "total_wait_time_before_departure": truck_routes['origin_to_port_routes']['total_wait_time_before_departure'],
                 "origin_name": truck_routes['origin_to_port_routes']['origin_name'],
                 "destination_name": truck_routes['origin_to_port_routes']['destination_name'],
                 "total_time_minutes": (
@@ -2356,28 +2364,13 @@ class RouteOptimizer:
             }
             features.append(f1)
 
-            f2 = {
-                "vehice": VEHICES['ship'],
-                "departure_time": ship_route['departure_time'],
-                "arrival_time": ship_route['arrival_time'],
-                "origin_name": ship_route['origin_name'],
-                "destination_name": ship_route['destination_name'],
-                "total_time_minutes": (
-                    0 if np.isnan(ship_route['total_time_minutes']) else ship_route['total_time_minutes']
-                ),
-                "total_distance_km": 0 if np.isnan(ship_route['total_distance_km']) else ship_route['total_distance_km'],
-                "co2_emissions_grams": (
-                    0 if np.isnan(ship_route['co2_emissions_grams']) else ship_route['co2_emissions_grams']
-                ),
-                "geometry": ship_segments[0] if transfer_ports else ship_geometry,
-            }
-            features.append(f2)
-
             if transfer_ports:
+                f2_delay = self._calculate_travel_time(ship_route['leg1']['departure_time'], round(ship_route['leg1']['total_time_minutes']/60, 2), True)
                 f2 = {
                     "vehice": VEHICES['ship'],
                     "departure_time": ship_route['leg1']['departure_time'],
                     "arrival_time": ship_route['leg1']['arrival_time'],
+                    "total_wait_time_before_departure": f2_delay['arrival_time'],
                     "origin_name": ship_route['leg1']['origin_name'],
                     "destination_name": ship_route['leg1']['destination_name'],
                     "total_time_minutes": (
@@ -2391,10 +2384,12 @@ class RouteOptimizer:
                 }
                 features.append(f2)
 
+                f3_delay = self._calculate_travel_time(ship_route['leg2']['departure_time'], round(ship_route['leg2']['total_time_minutes']/60, 2), True)
                 f3 = {
                     "vehice": VEHICES['ship'],
                     "departure_time": ship_route['leg2']['departure_time'],
                     "arrival_time": ship_route['leg2']['arrival_time'],
+                    "total_wait_time_before_departure": f3_delay['arrival_time'],
                     "origin_name": ship_route['leg2']['origin_name'],
                     "destination_name": ship_route['leg2']['destination_name'],
                     "total_time_minutes": (
@@ -2407,15 +2402,33 @@ class RouteOptimizer:
                     "geometry": ship_segments[1],
                 }
                 features.append(f3)
+            else:
+                ship_time_wait = self._calculate_travel_time(ship_route['departure_time'], round(ship_route['total_time_minutes']/60, 2), True)
+                f2 = {
+                    "vehice": VEHICES['ship'],
+                    "departure_time": ship_route['departure_time'],
+                    "arrival_time": ship_route['arrival_time'],
+                    "total_wait_time_before_departure": ship_time_wait['arrival_time'],
+                    "origin_name": ship_route['origin_name'],
+                    "destination_name": ship_route['destination_name'],
+                    "total_time_minutes": (
+                        0 if np.isnan(ship_route['total_time_minutes']) else ship_route['total_time_minutes']
+                    ),
+                    "total_distance_km": 0 if np.isnan(ship_route['total_distance_km']) else ship_route['total_distance_km'],
+                    "co2_emissions_grams": (
+                        0 if np.isnan(ship_route['co2_emissions_grams']) else ship_route['co2_emissions_grams']
+                    ),
+                    "geometry": ship_segments[0] if transfer_ports else ship_geometry,
+                }
+                features.append(f2)
 
-            train_arrival_time = f3['arrival_time'] if transfer_ports else f2['arrival_time']
-            truck_departure_time = self._calculate_travel_time(train_arrival_time, truck_routes['port_to_dest_routes']['total_time_minutes'] / 60, False)
-
+            ship_arrival_time = f3['arrival_time'] if transfer_ports else f2['arrival_time']
+            truck_departure_time = self._calculate_travel_time(ship_arrival_time, truck_routes['port_to_dest_routes']['total_time_minutes'] / 60, False)
+            globals.GLOBAL_STATE["arrival_time"] = truck_departure_time['arrival_time']
             f4 = {
                 "vehice": VEHICES['truck'],
-                "departure_time": train_arrival_time,
+                "departure_time": ship_arrival_time,
                 "arrival_time": truck_departure_time['arrival_time'],
-                # "arrival_time": truck_routes['port_to_dest_routes']['arrival_time'],
                 "origin_name": truck_routes['port_to_dest_routes']['origin_name'],
                 "destination_name": truck_routes['port_to_dest_routes']['destination_name'],
                 "total_time_minutes": (
@@ -2763,9 +2776,6 @@ class RouteOptimizer:
 
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(geojson_data, f, ensure_ascii=False, indent=2)
-        
-        with open('data.txt', "w", encoding="utf-8") as f:
-            json.dump(str(results), f, ensure_ascii=False, indent=2)
 
     def _convert_to_geojson(self, results: Dict) -> Dict:
         """Convert results to GeoJSON format"""
@@ -2868,6 +2878,9 @@ class RouteOptimizer:
                                         "arrival_time": feature.get(
                                             "arrival_time", '00:00'
                                         ),
+                                        "total_wait_time_before_departure": feature.get(
+                                            "total_wait_time_before_departure", '00:00'
+                                        ),
                                         "total_time_minutes": feature.get(
                                             "total_time_minutes", 0
                                         ),
@@ -2902,6 +2915,9 @@ class RouteOptimizer:
                                         ),
                                         "arrival_time": feature.get(
                                             "arrival_time", '00:00'
+                                        ),
+                                        "total_wait_time_before_departure": feature.get(
+                                            "total_wait_time_before_departure", '00:00'
                                         ),
                                         "total_time_minutes": feature.get(
                                             "total_time_minutes", 0
@@ -2978,6 +2994,9 @@ class RouteOptimizer:
                                         "arrival_time": route.get(
                                             "arrival_time", '00:00'
                                         ),
+                                        "total_wait_time_before_departure": feature.get(
+                                            "total_wait_time_before_departure", '00:00'
+                                        ),
                                         "total_time_minutes": route.get(
                                             "total_time_minutes", 0
                                         ),
@@ -3015,6 +3034,9 @@ class RouteOptimizer:
                                         ),
                                         "arrival_time": route.get(
                                             "arrival_time", '00:00'
+                                        ),
+                                        "total_wait_time_before_departure": feature.get(
+                                            "total_wait_time_before_departure", '00:00'
                                         ),
                                         "total_time_minutes": route.get(
                                             "total_time_minutes", 0

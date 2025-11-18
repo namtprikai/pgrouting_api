@@ -12,6 +12,7 @@ import geopandas as gpd
 from route_optimizer import RouteOptimizer
 
 from constant import *
+import globals
 
 # =========================
 # 環境変数
@@ -223,6 +224,8 @@ def multimodal_route(payload: MultimodalBody):
                 print(f"Saved optimal route by criteria: {criteria}")
 
             data = results['optimal_routes'][criteria]
+            departure_time = globals.GLOBAL_STATE["departure_time"]
+            arrival_time = globals.GLOBAL_STATE["arrival_time"]
 
             summary = {
                 'mode': mode.upper(),
@@ -230,8 +233,8 @@ def multimodal_route(payload: MultimodalBody):
                 'origin_name': origin_name,
                 'destination_name': destination_name,
                 
-                'departure_time': data['departure_time'] if 'departure_time' in data and data['departure_time'] else None,
-                'arrival_time': data['arrival_time'] if 'arrival_time' in data and data['arrival_time'] else None,
+                'departure_time': departure_time,
+                'arrival_time': arrival_time,
 
                 'origin_lat': origin_lat,
                 'origin_lon': origin_lon,
@@ -241,13 +244,6 @@ def multimodal_route(payload: MultimodalBody):
                 'total_time_minutes': data['total_time_minutes'] if 'total_time_minutes' in data and data['total_time_minutes'] else None,
                 'total_distance_meters': data['total_distance_meters'] if 'total_distance_meters' in data and data['total_distance_meters'] else None,
                 'total_co2_emissions_grams': data['co2_emissions_grams'] if 'co2_emissions_grams' in data and data['co2_emissions_grams'] else None,
-
-                'waypoint_name_1': '',
-                'waypoint_vehice_1': '',
-                'waypoint_lat_1': '',
-                'waypoint_lon_1': '',
-                'waypoint_time_minutes_1': '',
-                'waypoint_distance_meters_1': '',
                 
                 'message': '', #"時刻表データがないため、簡易試算となります"
 
