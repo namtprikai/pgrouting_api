@@ -3,6 +3,8 @@ from shapely.ops import linemerge
 import math
 import json
 from datetime import datetime, timedelta
+from shapely import wkt
+import numpy as np
 
 
 def _is_num(x):
@@ -255,3 +257,127 @@ def add_hours(time_str: str, hours: float = 3.0) -> str:
     base_time = datetime.strptime(time_str, "%H:%M")
     new_time = base_time + timedelta(hours=hours)
     return new_time.strftime("%H:%M")
+
+def create_features(route):
+    try:
+        geometry = route["geometry"]
+
+        # Handle different geometry types
+        if isinstance(geometry, str):
+            # If it's a WKT string, parse it
+            try:
+                geometry = wkt.loads(geometry)
+            except:
+                # If WKT parsing fails, try to parse as JSON
+                try:
+                    geometry = json.loads(geometry)
+                except:
+                    print(
+                        f"Warning: Could not parse geometry string: {geometry[:100]}..."
+                    )
+                    return None
+        elif isinstance(geometry, LineString):
+            # If it's already a LineString object, use it directly
+            pass
+        elif isinstance(geometry, dict):
+            # Already GeoJSON, use as is
+            pass
+        elif isinstance(geometry, list):
+            # List of coordinates → convert to LineString
+            try:
+                geometry = LineString(geometry)
+            except:
+                print(f"Warning: Could not convert list geometry: {geometry[:100]}...")
+                return None
+        else:
+            # Try to convert other geometry types
+            try:
+                geometry = wkt.loads(str(geometry))
+            except:
+                print(
+                    f"Warning: Could not convert geometry: {type(geometry)}"
+                )
+                return None
+
+        # Create feature
+        if isinstance(geometry, dict):
+            # Already GeoJSON
+            new_feature = {
+                "type": "Feature",
+                "geometry": geometry,
+                "properties": convert_numpy_types(
+                    {
+                        "vehicle": route.get("vehicle", ""),
+                        "departure_time": route.get(
+                            "departure_time", "00:00"
+                        ),
+                        "arrival_time": route.get("arrival_time", "00:00"),
+                        "total_time_minutes": route.get(
+                            "total_time_minutes", 0
+                        ),
+                        "total_distance_km": route.get(
+                            "total_distance_km", 0
+                        ),
+                        "total_co2_emissions_grams": route.get(
+                            "co2_emissions_grams", 0
+                        ),
+                        "origin_name": route.get("origin_name", ""),
+                        "destination_name": route.get(
+                            "destination_name", ""
+                        ),
+                    }
+                ),
+            }
+        else:
+            # Shapely geometry
+            new_feature = {
+                "type": "Feature",
+                "geometry": {
+                    "type": geometry.geom_type,
+                    "coordinates": list(geometry.coords),
+                },
+                "properties": convert_numpy_types(
+                    {
+                        "vehicle": route.get("vehicle", ""),
+                        "departure_time": route.get(
+                            "departure_time", "00:00"
+                        ),
+                        "arrival_time": route.get("arrival_time", "00:00"),
+                        "total_time_minutes": route.get(
+                            "total_time_minutes", 0
+                        ),
+                        "total_distance_km": route.get(
+                            "total_distance_km", 0
+                        ),
+                        "total_co2_emissions_grams": route.get(
+                            "co2_emissions_grams", 0
+                        ),
+                        "origin_name": route.get("origin_name", ""),
+                        "destination_name": route.get(
+                            "destination_name", ""
+                        ),
+                    }
+                ),
+            }
+        
+        return new_feature
+
+    except Exception as e:
+        print(
+            f"Warning: Could not convert geometry for route {route.get('name', '')}: {e}"
+        )
+
+def convert_numpy_types(obj):
+    """Convert numpy types to Python native types"""
+    if isinstance(obj, np.integer):
+        return int(obj)
+    elif isinstance(obj, np.floating):
+        return float(obj)
+    elif isinstance(obj, np.ndarray):
+        return obj.tolist()
+    elif isinstance(obj, dict):
+        return {key: convert_numpy_types(value) for key, value in obj.items()}
+    elif isinstance(obj, list):
+        return [convert_numpy_types(item) for item in obj]
+    else:
+        return obj

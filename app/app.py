@@ -97,17 +97,19 @@ def sql_all(query: str, params: Tuple[Any, ...]) -> Optional[Dict[str, Any]]:
 # 入出力スキーマ
 # =========================
 class MultimodalBody(BaseModel):
+    mode: str = STREET_TYPE["TRUCK_ONLY"]
     origin_name: str
     origin_lat: confloat(ge=-90, le=90)
     origin_lon: confloat(ge=-180, le=180)
     destination_name: str
     destination_lat: confloat(ge=-90, le=90)
     destination_lon: confloat(ge=-180, le=180)
-    mode: str = STREET_TYPE["TRUCK_ONLY"]
-    weight: int = 1
     max_transfers: int = 1
     show_all: bool = True
+    find_station_radius_km: int
+    find_port_radius_km: int
     departure_hour: int
+    weight_tons: int = 1
 
 # =========================
 # FastAPI
@@ -130,7 +132,7 @@ def multimodal_route(payload: MultimodalBody):
         destination_lat = float(payload.destination_lat) if payload.destination_lat is not None else None
         destination_lon = float(payload.destination_lon) if payload.destination_lon is not None else None
         mode = payload.mode.lower() if payload.mode is not None else STREET_TYPE["TRUCK_ONLY"].lower()
-        weight = payload.weight if payload.weight is not None else 1
+        weight_tons = payload.weight_tons if payload.weight_tons is not None else 1
         max_transfers = payload.max_transfers if payload.max_transfers is not None else 1
         show_all = payload.show_all if payload.show_all is not None else True
 
@@ -160,7 +162,7 @@ def multimodal_route(payload: MultimodalBody):
             origin_name,
             destination_name,
             departure_hour,
-            weight,mode,
+            weight_tons,mode,
             enable_transfer=True,  # Automatically enabled
             max_transfers=max_transfers,
             show_all=show_all
@@ -226,26 +228,26 @@ def multimodal_route(payload: MultimodalBody):
             arrival_time = globals.GLOBAL_STATE["arrival_time"]
 
             summary = {
-                'mode': mode.upper(),
-
                 'origin_name': origin_name,
-                'destination_name': destination_name,
-                
-                'departure_time': departure_time,
-                'arrival_time': arrival_time,
-
                 'origin_lat': origin_lat,
                 'origin_lon': origin_lon,
+                
+                'destination_name': destination_name,
                 'destination_lat': destination_lat,
                 'destination_lon': destination_lon,
-
-                'total_time_minutes': data['total_time_minutes'] if 'total_time_minutes' in data and data['total_time_minutes'] else None,
-                'total_distance_meters': data['total_distance_meters'] if 'total_distance_meters' in data and data['total_distance_meters'] else None,
-                'total_co2_emissions_grams': data['co2_emissions_grams'] if 'co2_emissions_grams' in data and data['co2_emissions_grams'] else None,
                 
-                'message': globals.GLOBAL_STATE['warning_message'],
-
-                'geojson': geojson
+                'result': [
+                    {
+                        'mode': mode.upper(),
+                        'departure_time': departure_time,
+                        'arrival_time': arrival_time,
+                        'total_time_minutes': data['total_time_minutes'] if 'total_time_minutes' in data and data['total_time_minutes'] else None,
+                        'total_distance_meters': data['total_distance_meters'] if 'total_distance_meters' in data and data['total_distance_meters'] else None,
+                        'total_co2_emissions_grams': data['co2_emissions_grams'] if 'co2_emissions_grams' in data and data['co2_emissions_grams'] else None,
+                        'message': globals.GLOBAL_STATE['warning_message'],
+                        'geojson': geojson
+                    }
+                ]
             }
     else:
         summary = {

@@ -20,7 +20,8 @@ from helper import (
     build_result_segment,
     linestring_to_geojson_feature,
     extract_linestring,
-    add_hours
+    add_hours,
+    create_features
 )
 
 try:
@@ -443,7 +444,7 @@ class RouteOptimizer:
                     
                         routes.extend(combined_routes)
                     else:
-                        return {'isError': True, 'data': [], 'message': '起点・終点の近隣の港を結ぶ経路が見つかりません'}
+                        return {'isError': True, 'data': [], 'message': MESSAGES['ship_route_not_found']}
                 else:
                     return {'isError': True, 'data': [], 'message': 'Truck route not found'}
 
@@ -2215,7 +2216,7 @@ class RouteOptimizer:
                 origin_travel_time_wait = self._calculate_travel_time(input_departure_hour, round(origin_to_port["time"]/60, 2), True)
                 
                 globals.GLOBAL_STATE["departure_time"] = origin_travel_time['departure_time']
-                globals.GLOBAL_STATE["origin_to_port_time"] = add_hours(origin_travel_time['arrival_time'])
+                globals.GLOBAL_STATE["arrival_time_route_before"] = add_hours(origin_travel_time['arrival_time'])
                 
                 origin_to_port_routes = {
                     "departure_time": origin_travel_time['departure_time'],
@@ -2402,6 +2403,9 @@ class RouteOptimizer:
             for transfer_port in list(transfer_ports)[:max_transfers]:
                 # Find ship routes via transfer
                 leg1 = self._get_ship_route_info(origin_port["C02_005"], transfer_port)
+                if leg1:
+                    globals.GLOBAL_STATE["arrival_time_route_before"] = add_hours(leg1['arrival_time'])
+                
                 leg2 = self._get_ship_route_info(transfer_port, dest_port["C02_005"])
 
                 if leg1 and leg2:
@@ -2853,15 +2857,10 @@ class RouteOptimizer:
         ]
 
         if not route.empty:
-            # route_time = route["Route_Time"].iloc[0] if route["Route_Time"].iloc[0] else None
-            # departure_time = route["Departure_Time"].iloc[0] if route["Departure_Time"].iloc[0] else globals.GLOBAL_STATE["origin_to_port_time"]
-            # arrival_time = route["Arrival_Time"].iloc[0] if route["Arrival_Time"].iloc[0] else None
-            # speed_upper = route["Speed_Upper_(km/h)"].iloc[0] if route["Speed_Upper_(km/h)"].iloc[0] else SHIP_SPEED_DEFAULT
-
-            route_time = None
-            departure_time = globals.GLOBAL_STATE["origin_to_port_time"]
-            arrival_time = None
-            speed_upper = SHIP_SPEED_DEFAULT
+            route_time = route["Route_Time"].iloc[0] if route["Route_Time"].iloc[0] else None
+            departure_time = route["Departure_Time"].iloc[0] if route["Departure_Time"].iloc[0] else globals.GLOBAL_STATE["arrival_time_route_before"]
+            arrival_time = route["Arrival_Time"].iloc[0] if route["Arrival_Time"].iloc[0] else None
+            speed_upper = route["Speed_Upper_(km/h)"].iloc[0] if route["Speed_Upper_(km/h)"].iloc[0] else SHIP_SPEED_DEFAULT
 
             # Calculate distance between ports
             origin_port_data = self.minato_gdf[
@@ -3015,229 +3014,18 @@ class RouteOptimizer:
         for route in results.get("routes", []):
             if "features" in route and route["features"]:
                 for feature in route["features"]:
-                    try:
-                        geometry = feature["geometry"]
-
-                        # Handle different geometry types
-                        if isinstance(geometry, str):
-                            # If it's a WKT string, parse it
-                            try:
-                                geometry = wkt.loads(geometry)
-                            except:
-                                # If WKT parsing fails, try to parse as JSON
-                                try:
-                                    geometry = json.loads(geometry)
-                                except:
-                                    print(f"Warning: Could not parse geometry string: {geometry[:100]}...")
-                                    continue
-
-                        elif isinstance(geometry, LineString):
-                            # Already a LineString object
-                            pass
-
-                        elif isinstance(geometry, dict):
-                            # Already GeoJSON format: {"type": "LineString", "coordinates": [...]}
-                            pass
-
-                        elif isinstance(geometry, list):
-                            # List of coordinates → convert to LineString
-                            try:
-                                geometry = LineString(geometry)
-                            except:
-                                print(f"Warning: Could not convert list geometry: {geometry[:100]}...")
-                                continue
-
-                        else:
-                            # Try to convert other geometry types
-                            try:
-                                geometry = wkt.loads(str(geometry))
-                            except:
-                                print(f"Warning: Could not convert geometry: {type(geometry)}")
-                                continue
-
-                        # Create feature
-                        if isinstance(geometry, dict):
-                            # Already GeoJSON
-                            new_feature = {
-                                "type": "Feature",
-                                "geometry": geometry,
-                                "properties": convert_numpy_types(
-                                    {
-                                        "vehicle": feature.get("vehicle", ""),
-                                        "departure_time": feature.get(
-                                            "departure_time", '00:00'
-                                        ),
-                                        "arrival_time": feature.get(
-                                            "arrival_time", '00:00'
-                                        ),
-                                        "total_wait_time_before_departure": feature.get(
-                                            "total_wait_time_before_departure", '00:00'
-                                        ),
-                                        "total_time_minutes": feature.get(
-                                            "total_time_minutes", 0
-                                        ),
-                                        "total_distance_km": feature.get(
-                                            "total_distance_km", 0
-                                        ),
-                                        "total_co2_emissions_grams": feature.get(
-                                            "co2_emissions_grams", 0
-                                        ),
-                                        "origin_name": feature.get(
-                                            "origin_name", ''
-                                        ),
-                                        "destination_name": feature.get(
-                                            "destination_name", ''
-                                        ),
-                                    }
-                                ),
-                            }
-                        else:
-                            # Shapely geometry
-                            new_feature = {
-                                "type": "Feature",
-                                "geometry": {
-                                    "type": geometry.geom_type,
-                                    "coordinates": list(geometry.coords),
-                                },
-                                "properties": convert_numpy_types(
-                                    {
-                                        "vehicle": feature.get("vehicle", ""),
-                                        "departure_time": feature.get(
-                                            "departure_time", '00:00'
-                                        ),
-                                        "arrival_time": feature.get(
-                                            "arrival_time", '00:00'
-                                        ),
-                                        "total_wait_time_before_departure": feature.get(
-                                            "total_wait_time_before_departure", '00:00'
-                                        ),
-                                        "total_time_minutes": feature.get(
-                                            "total_time_minutes", 0
-                                        ),
-                                        "total_distance_km": feature.get(
-                                            "total_distance_km", 0
-                                        ),
-                                        "total_co2_emissions_grams": feature.get(
-                                            "co2_emissions_grams", 0
-                                        ),
-                                        "origin_name": feature.get(
-                                            "origin_name", ''
-                                        ),
-                                        "destination_name": feature.get(
-                                            "destination_name", ''
-                                        ),
-                                    }
-                                ),
-                            }
-
-                        geojson["features"].append(new_feature)
-
-                    except Exception as e:
-                        print(
-                            f"Warning: Could not convert geometry for route {route.get('name', '')}: {e}"
-                        )
+                    new_feature = create_features(feature)
+                    if not new_feature:
+                        continue
+                    
+                    geojson["features"].append(new_feature)
             else:
                 if "geometry" in route and route["geometry"]:
-                    try:
-                        geometry = route["geometry"]
-
-                        # Handle different geometry types
-                        if isinstance(geometry, str):
-                            # If it's a WKT string, parse it
-                            try:
-                                geometry = wkt.loads(geometry)
-                            except:
-                                # If WKT parsing fails, try to parse as JSON
-                                try:
-                                    geometry = json.loads(geometry)
-                                except:
-                                    print(
-                                        f"Warning: Could not parse geometry string: {geometry[:100]}..."
-                                    )
-                                    continue
-                        elif isinstance(geometry, LineString):
-                            # If it's already a LineString object, use it directly
-                            pass
-                        elif isinstance(geometry, dict):
-                            # Already GeoJSON, use as is
-                            pass
-                        else:
-                            # Try to convert other geometry types
-                            try:
-                                geometry = wkt.loads(str(geometry))
-                            except:
-                                print(
-                                    f"Warning: Could not convert geometry: {type(geometry)}"
-                                )
-                                continue
-
-                        # Create feature
-                        if isinstance(geometry, dict):
-                            # Already GeoJSON
-                            new_feature = {
-                                "type": "Feature",
-                                "geometry": geometry,
-                                "properties": convert_numpy_types(
-                                    {
-                                        "vehicle": route.get("vehicle", ""),
-                                        "departure_time": route.get(
-                                            "departure_time", "00:00"
-                                        ),
-                                        "arrival_time": route.get("arrival_time", "00:00"),
-                                        "total_time_minutes": route.get(
-                                            "total_time_minutes", 0
-                                        ),
-                                        "total_distance_km": route.get(
-                                            "total_distance_km", 0
-                                        ),
-                                        "total_co2_emissions_grams": route.get(
-                                            "co2_emissions_grams", 0
-                                        ),
-                                        "origin_name": route.get("origin_name", ""),
-                                        "destination_name": route.get(
-                                            "destination_name", ""
-                                        ),
-                                    }
-                                ),
-                            }
-                        else:
-                            # Shapely geometry
-                            new_feature = {
-                                "type": "Feature",
-                                "geometry": {
-                                    "type": geometry.geom_type,
-                                    "coordinates": list(geometry.coords),
-                                },
-                                "properties": convert_numpy_types(
-                                    {
-                                        "vehicle": route.get("vehicle", ""),
-                                        "departure_time": route.get(
-                                            "departure_time", "00:00"
-                                        ),
-                                        "arrival_time": route.get("arrival_time", "00:00"),
-                                        "total_time_minutes": route.get(
-                                            "total_time_minutes", 0
-                                        ),
-                                        "total_distance_km": route.get(
-                                            "total_distance_km", 0
-                                        ),
-                                        "total_co2_emissions_grams": route.get(
-                                            "co2_emissions_grams", 0
-                                        ),
-                                        "origin_name": route.get("origin_name", ""),
-                                        "destination_name": route.get(
-                                            "destination_name", ""
-                                        ),
-                                    }
-                                ),
-                            }
-                        
-                        geojson["features"].append(new_feature)
-
-                    except Exception as e:
-                        print(
-                            f"Warning: Could not convert geometry for route {route.get('name', '')}: {e}"
-                        )
+                    new_feature = create_features(route)
+                    if not new_feature:
+                        continue
+                    
+                    geojson["features"].append(new_feature)
 
         return geojson
 
