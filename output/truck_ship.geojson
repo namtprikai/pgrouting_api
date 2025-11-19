@@ -1,0 +1,109 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            135.161,
+            34.652
+          ],
+          [
+            135.24260535,
+            34.67284011
+          ]
+        ]
+      },
+      "properties": {
+        "vehicle": "Truck",
+        "departure_time": "08:00",
+        "arrival_time": "08:07",
+        "total_time_minutes": 7.83,
+        "total_distance_km": 7.83,
+        "total_co2_emissions_grams": 336690.0,
+        "origin_name": "神戸ターミナル ",
+        "destination_name": "神戸港"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            135.24260535,
+            34.67284011
+          ],
+          [
+            130.87444066,
+            33.9152654
+          ]
+        ]
+      },
+      "properties": {
+        "vehicle": "Ship",
+        "departure_time": "18:30",
+        "arrival_time": "7:00",
+        "total_time_minutes": 750.0,
+        "total_distance_km": 616.21,
+        "total_co2_emissions_grams": 6162080.740507178,
+        "origin_name": "神戸港",
+        "destination_name": "北九州港"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            130.87444066,
+            33.9152654
+          ],
+          [
+            139.70444421,
+            35.2864336
+          ]
+        ]
+      },
+      "properties": {
+        "vehicle": "Ship",
+        "departure_time": "23:55",
+        "arrival_time": "20:45",
+        "total_time_minutes": 1245.0,
+        "total_distance_km": 1235.74,
+        "total_co2_emissions_grams": 12357416.726161258,
+        "origin_name": "北九州港",
+        "destination_name": "横須賀港"
+      }
+    },
+    {
+      "type": "Feature",
+      "geometry": {
+        "type": "LineString",
+        "coordinates": [
+          [
+            139.70444421,
+            35.2864336
+          ],
+          [
+            139.623,
+            35.401
+          ]
+        ]
+      },
+      "properties": {
+        "vehicle": "Truck",
+        "departure_time": "20:45",
+        "arrival_time": "20:59",
+        "total_time_minutes": 14.71,
+        "total_distance_km": 7.83,
+        "total_co2_emissions_grams": 632530.0,
+        "origin_name": "横須賀港",
+        "destination_name": "横浜ターミナル"
+      }
+    }
+  ]
+}

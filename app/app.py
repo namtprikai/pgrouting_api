@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     # PGPASSWORD: str = os.getenv("PGPASSWORD")
 
     PGHOST: str = "localhost"
-    PGPORT: int = 5434
+    PGPORT: int = 5432
     PGDATABASE: str = "pgrouting"
     PGUSER: str = "postgres"
     PGPASSWORD: str = "pgrouting"

@@ -1,4 +1,3 @@
-output/*
 __pycache__/
 .venv/
 importer_data/japan_highways.osm.bz2
@@ -11,4 +10,4 @@ importer_data/貨物駅_時刻表.xlsx
 importer_data/chubu-highways.osm.bz2
 profile.out
 config/*
-data_file/*
+venv
