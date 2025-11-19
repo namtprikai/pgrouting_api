@@ -1,4 +1,4 @@
-truck_train
+truck_ship
 
 ==================== truck_train_ship_train ==================== 2s -> 9s
 
@@ -222,7 +222,7 @@ truck_train
 
 
 ==================== truck_ship ==================== 1.5s -> 3.5s
-*
+
 {
     "mode": "truck_ship",
     "origin_name":"神戸ターミナル ",
