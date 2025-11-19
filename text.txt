@@ -1,4 +1,6 @@
-==================== truck_train_ship_train ==================== 0.8s -> 4s
+truck_train
+
+==================== truck_train_ship_train ==================== 2s -> 9s
 
 {
     "mode": "truck_train_ship_train",
@@ -28,6 +30,33 @@
     "weight_tons": 1000
 }
 
+{
+    "mode": "truck_train_ship_train",
+    "origin_name":"神戸ターミナル ",
+    "origin_lat": 34.2898,
+    "origin_lon": 131.6534,
+    "destination_name":"横浜ターミナル",
+    "destination_lat":35.9848,
+    "destination_lon":138.6846,
+    "find_station_radius_km": 100,
+    "find_port_radius_km": 100,
+    "departure_hour": 8,
+    "weight_tons": 1000
+}
+
+{
+    "mode": "truck_train_ship_train",
+    "origin_name":"神戸ターミナル ",
+    "origin_lat": 33.6549,
+    "origin_lon": 132.9699,
+    "destination_name":"横浜ターミナル",
+    "destination_lat":43.8857,
+    "destination_lon":143.3763,
+    "find_station_radius_km": 100,
+    "find_port_radius_km": 100,
+    "departure_hour": 8,
+    "weight_tons": 1000
+}
 
 ==================== truck_only ==================== 3.5s
 
@@ -82,6 +111,20 @@
     "destination_name":"横浜ターミナル",
     "destination_lat":40.0053,
     "destination_lon":141.3902,
+    "find_station_radius_km": 100,
+    "find_port_radius_km": 100,
+    "departure_hour": 8,
+    "weight_tons": 1000
+}
+
+{
+    "mode": "truck_only",
+    "origin_name":"神戸ターミナル ",
+    "origin_lat": 37.3929,
+    "origin_lon": 137.1246,
+    "destination_name":"横浜ターミナル",
+    "destination_lat":40.4328,
+    "destination_lon":141.2162,
     "find_station_radius_km": 100,
     "find_port_radius_km": 100,
     "departure_hour": 8,
@@ -176,3 +219,35 @@
     "departure_hour": 8,
     "weight_tons": 1000
 }
+
+
+==================== truck_ship ==================== 1.5s -> 3.5s
+*
+{
+    "mode": "truck_ship",
+    "origin_name":"神戸ターミナル ",
+    "origin_lat": 34.652,
+    "origin_lon": 135.161,
+    "destination_name":"横浜ターミナル",
+    "destination_lat":35.401,
+    "destination_lon":139.623,
+    "find_station_radius_km": 100,
+    "find_port_radius_km": 100,
+    "departure_hour": 8,
+    "weight_tons": 1000
+}
+
+{
+    "mode": "truck_ship",
+    "origin_name":"神戸ターミナル ",
+    "origin_lat": 37.3929,
+    "origin_lon": 137.1246,
+    "destination_name":"横浜ターミナル",
+    "destination_lat":40.4328,
+    "destination_lon":141.2162,
+    "find_station_radius_km": 100,
+    "find_port_radius_km": 100,
+    "departure_hour": 8,
+    "weight_tons": 1000
+} 
+  -> ko co
