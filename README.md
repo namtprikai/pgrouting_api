@@ -20,6 +20,8 @@ API for calculating the optimal route in Japan
 
 2. Download and move file **mapconfig.xml** to folder **importer_data**
 
+3. Download and move files **L013101物流拠点出発地到着地リスト.csv, 貨物船_位置情報（国土数値情報）.csv, 貨物船_時刻表（2024年版海上定期便ガイド）.csv, 貨物駅_位置情報.xlsx, 貨物駅_時刻表.xlsx** file to **data_file** folder
+
 ## Installation
 
 ### Make venv and install requirements
@@ -73,3 +75,46 @@ python app/import_ports.py
 ```
 
 3. Check data in the table **ports**
+
+## Running Tests
+
+### Input
+```bash
+{
+    "origin_name":<Name origin>,
+    "origin_lat":<origin latitude>,
+    "origin_lon":<origin longitude>, 
+    "dest_name":<Name destination>,
+    "dest_lat":<dest latitude>,
+    "dest_lon":<dest longitude>,
+    "mode": <mode_type>
+}
+```
+### Exam:
+```bash
+{
+    "origin_name":"葛西トラックターミナル",
+    "origin_lat":35.64657,
+    "origin_lon":139.8624, 
+    "dest_name":"宮崎ターミナル",
+    "dest_lat":31.913,
+    "dest_lon":131.456,
+    "mode": "TRUCK_TRAIN"
+}
+```
+### Output:
+```bash
+{
+    "time": 33.91639269291826,
+    "distance": 100600022.98356158,
+    "co2": 2012000988.2931478,
+    "mode": "truck_train",
+    "origin_port": null,
+    "dest_port": null,
+    "origin_station": "東京貨物ターミナル",
+    "dest_station": "佐土原オフレールステーション",
+    "transfer_port": null,
+    "transfer_station": null
+}
+```
+The exported GeoJSON file is located in the **/output** folder.

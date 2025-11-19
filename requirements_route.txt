@@ -1,0 +1,17 @@
+# Requirements for Route Optimizer
+# Các thư viện cần thiết cho Route Optimizer
+
+# Core data processing
+pandas>=2.0.0
+numpy>=1.24.0
+
+# Geospatial processing
+geopandas>=0.14.0
+shapely>=2.0.0
+pyproj>=3.5.0
+
+# Excel file support
+openpyxl>=3.1.0
+
+# Additional utilities
+python-dateutil>=2.8.0
