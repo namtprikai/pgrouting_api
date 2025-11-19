@@ -1,46 +1,32 @@
-import json
-import os
-from typing import Any, Dict, List, Optional, Tuple
-
 import psycopg2
 import psycopg2.pool
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, confloat, conint
+from typing import Any, Dict, Optional, Tuple
+from fastapi import FastAPI
+from pydantic import BaseModel, confloat
 from pydantic_settings import BaseSettings
-from shapely import LineString
-import geopandas as gpd
-from route_optimizer import RouteOptimizer
 
-from constant import *
 import globals
+from route_optimizer import RouteOptimizer
+from constant import *
 
-# =========================
+
 # 環境変数
-# =========================
 class Settings(BaseSettings):
-    # PGHOST: str = os.getenv("PGHOST")
-    # PGPORT: int = os.getenv("PGPORT")
-    # PGDATABASE: str = os.getenv("PGDATABASE")
-    # PGUSER: str = os.getenv("PGUSER")
-    # PGPASSWORD: str = os.getenv("PGPASSWORD")
+    PGHOST: str
+    PGPORT: int
+    PGDATABASE: str
+    PGUSER: str
+    PGPASSWORD: str
 
-    PGHOST: str = "localhost"
-    PGPORT: int = 5432
-    PGDATABASE: str = "pgrouting"
-    PGUSER: str = "postgres"
-    PGPASSWORD: str = "pgrouting"
+    TOLL_PER_KM: float
+    SHIP_SPEED_KPH: float
 
-    PORT: int = 8080
-
-    # デフォルト料金・船速（必要に応じて上書き）
-    TOLL_PER_KM: float = 30.0
-    SHIP_SPEED_KPH: float = 30.0
-
-    # CO2 係数（g-CO2/トンkm）— 仮の既定値。運用で調整してください
-    EF_TRUCK_G_PER_TKM: float = 120.0
-    EF_TRAIN_G_PER_TKM: float = 22.0
-    EF_SHIP_G_PER_TKM: float = 12.0
-    PAYLOAD_TON: float = 10.0
+    EF_TRUCK_G_PER_TKM: float
+    EF_TRAIN_G_PER_TKM: float
+    EF_SHIP_G_PER_TKM: float
+    PAYLOAD_TON: float
+    
+    PORT: int
 
     class Config:
         env_file = ".env"
@@ -49,9 +35,7 @@ class Settings(BaseSettings):
 settings = Settings()
 monitoring = False
 
-# =========================
 # DB プール
-# =========================
 POOL: psycopg2.pool.SimpleConnectionPool = psycopg2.pool.SimpleConnectionPool(
     minconn=1,
     maxconn=10,
@@ -93,9 +77,7 @@ def sql_all(query: str, params: Tuple[Any, ...]) -> Optional[Dict[str, Any]]:
     finally:
         POOL.putconn(conn)
 
-# =========================
 # 入出力スキーマ
-# =========================
 class MultimodalBody(BaseModel):
     mode: str = STREET_TYPE["TRUCK_ONLY"]
     origin_name: str
@@ -111,10 +93,12 @@ class MultimodalBody(BaseModel):
     departure_hour: int
     weight_tons: int = 1
 
-# =========================
 # FastAPI
-# =========================
 app = FastAPI(title="Multimodal Truck/Train/Ship Router (FastAPI)")
+
+@app.get("/")
+def root():
+    return {"message": "Hello FastAPI!"}
 
 @app.get("/health")
 def health():
@@ -223,7 +207,11 @@ def multimodal_route(payload: MultimodalBody):
             if not show_all:
                 print(f"Saved optimal route by criteria: {criteria}")
 
-            data = results['optimal_routes'][criteria]
+            if criteria in results['optimal_routes']:
+                data = results['optimal_routes'][criteria]
+            else:
+                raise ValueError(f"Criteria '{criteria}' not available. Options: {list(results['optimal_routes'].keys())}")
+
             departure_time = globals.GLOBAL_STATE["departure_time"]
             arrival_time = globals.GLOBAL_STATE["arrival_time"]
 
@@ -257,7 +245,6 @@ def multimodal_route(payload: MultimodalBody):
     return summary
 
 
-# 直接起動用
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run("app:app", host="0.0.0.0", port=settings.PORT, reload=True)

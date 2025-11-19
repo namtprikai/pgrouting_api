@@ -1,5 +1,3 @@
-truck_ship
-
 ==================== truck_train_ship_train ==================== 2s -> 9s
 
 {

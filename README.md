@@ -20,7 +20,7 @@ API for calculating the optimal route in Japan
 
 2. Download and move file **mapconfig.xml** to folder **importer_data**
 
-3. Download and move files **L013101物流拠点出発地到着地リスト.csv, 貨物船_位置情報（国土数値情報）.csv, 貨物船_時刻表（2024年版海上定期便ガイド）.csv, 貨物駅_位置情報.xlsx, 貨物駅_時刻表.xlsx** file to **data_file** folder
+3. Download and move files **L013101物流拠点出発地到着地リスト.csv, 貨物船_位置情報（国土数値情報）.csv, 貨物船_時刻表（2024年版海上定期便ガイド）.csv, 貨物駅_位置情報.csv, 貨物駅_時刻表.csv** file to **data_file** folder
 
 ## Installation
 

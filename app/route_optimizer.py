@@ -13,6 +13,7 @@ import numpy as np
 import json
 from shapely import wkt
 import math
+
 from constant import *
 import globals
 from helper import (
@@ -22,6 +23,7 @@ from helper import (
     add_hours,
     create_features
 )
+from decoratorr import timeit
 
 try:
     import psycopg2
@@ -37,6 +39,7 @@ class RouteOptimizer:
     Class for optimizing multimodal transportation routes
     """
 
+    @timeit("__init__")
     def __init__(self, data_folder_path: str, db_config: Optional[Dict] = None):
         """
         Initialize RouteOptimizer
@@ -81,6 +84,7 @@ class RouteOptimizer:
         self._node_cache = {}
         self._route_cache = {}
 
+    @timeit("_load_all_data")
     def _load_all_data(self):
         """Load all required data"""
         print("Loading data...")
@@ -105,6 +109,7 @@ class RouteOptimizer:
 
         print("Data loading completed!")
         
+    @timeit("_load_od_data")
     def _load_od_data(self):
         """Load origin-destination data"""
         path = f"{self.data_folder_path}/L013101物流拠点出発地到着地リスト.csv"
@@ -116,6 +121,7 @@ class RouteOptimizer:
         )
         self.odlist_gdf.set_crs(epsg=4326, inplace=True)
 
+    @timeit("_load_port_data")
     def _load_port_data(self):
         """Load port data"""
         minato = pd.read_csv(
@@ -128,6 +134,7 @@ class RouteOptimizer:
         self.minato_gdf.set_crs(epsg=4326, inplace=True)
         self.minato_gdf["C02_005"] = self.minato_gdf["C02_005"] + "港"
 
+    @timeit("_load_station_data")
     def _load_station_data(self):
         """Load freight station data"""
         station = pd.read_csv(f"{self.data_folder_path}/貨物駅_位置情報.csv")
@@ -136,6 +143,7 @@ class RouteOptimizer:
         )
         self.station_gdf.set_crs(epsg=4326, inplace=True)
 
+    @timeit("_load_ferry_schedule")
     def _load_ferry_schedule(self):
         """Load ferry schedule"""
         self.ferry_time = pd.read_csv(
@@ -159,6 +167,7 @@ class RouteOptimizer:
             self.minato_gdf["C02_005"].isin(self.port_list)
         ]
 
+    @timeit("_load_train_schedule")
     def _load_train_schedule(self):
         """Load train schedule"""
         self.train_time = pd.read_csv(f"{self.data_folder_path}/貨物駅_時刻表.csv")
@@ -208,12 +217,14 @@ class RouteOptimizer:
         # Remove duplicates
         self.train_time = self.train_time.drop_duplicates(subset=["train_od"])
 
+    @timeit("_load_truck_route_data")
     def _load_truck_route_data(self):
         """Load truck route data"""
         self.track_route = gpd.read_file(
             f"{self.data_folder_path}/_NITAS自動車経路探索結果データ.gpkg"
         )
 
+    @timeit("find_route")
     def find_route(
         self,
         origin_lat: float,
@@ -304,6 +315,7 @@ class RouteOptimizer:
                 "optimal_routes": optimal_routes,
             }
 
+    @timeit("_find_nearest_ports")
     def _find_nearest_ports(self, origin_point: Point, dest_point: Point) -> Dict:
         """Find nearest ports to origin and destination points"""
         # Create temporary GeoDataFrame for origin and destination
@@ -336,6 +348,7 @@ class RouteOptimizer:
             "dest_port": dest_ports.iloc[0] if not dest_ports.empty else None,
         }
 
+    @timeit("_find_nearest_stations")
     def _find_nearest_stations(self, origin_point: Point, dest_point: Point) -> Dict:
         """Find nearest stations to origin and destination points"""
         # Create temporary GeoDataFrame for origin and destination
@@ -370,9 +383,11 @@ class RouteOptimizer:
             "dest_station": dest_stations.iloc[0] if not dest_stations.empty else None,
         }
 
+    @timeit("_nearest_station")
     def _nearest_station(self, lon: float, lat: float):
         return self._db_query_one("SELECT * FROM nearest_station(%s, %s)", (lon, lat))
     
+    @timeit("_calculate_travel_time")
     def _calculate_travel_time(self, input_departure_hour, travel_hours: float, wait: bool = False):
         # --- Parse input departure time ---
         if isinstance(input_departure_hour, int) or isinstance(input_departure_hour, float):
@@ -395,6 +410,7 @@ class RouteOptimizer:
             "arrival_time": arrival_dt.strftime("%H:%M")
         }
 
+    @timeit("_calculate_routes_by_mode")
     def _calculate_routes_by_mode(
         self,
         origin_point: Point,
@@ -1179,9 +1195,11 @@ class RouteOptimizer:
 
         return routes
 
+    @timeit("_calc_total_distance")
     def _calc_total_distance(self, list_distances):
         return sum(list_distances)
 
+    @timeit("_combine_linestrings")
     def _combine_linestrings(
         self,
         mode,
@@ -1326,6 +1344,7 @@ class RouteOptimizer:
 
         return results if results else None
 
+    @timeit("_normalize_coords")
     def _normalize_coords(self, coords, transformer, target_crs):
         normalized = []
 
@@ -1355,6 +1374,7 @@ class RouteOptimizer:
 
         return normalized if len(normalized) >= 2 else None
 
+    @timeit("_calculate_truck_route")
     def _calculate_truck_route(
         self, origin_point: Point,
         dest_point: Point,
@@ -1413,6 +1433,7 @@ class RouteOptimizer:
 
         return None
 
+    @timeit("_calculate_ship_route")
     def _calculate_ship_route(
         self,
         origin_point: Point,
@@ -1558,6 +1579,7 @@ class RouteOptimizer:
 
         return None
 
+    @timeit("_calculate_train_route")
     def _calculate_train_route(
         self,
         origin_point: Point,
@@ -1714,6 +1736,7 @@ class RouteOptimizer:
 
         return None
 
+    @timeit("_calculate_train_route_modified")
     def _calculate_train_route_modified(
         self,
         input_departure_hour: str,
@@ -1886,6 +1909,7 @@ class RouteOptimizer:
             print(f"Error calculating train route: {e}")
             return None, None, None
 
+    @timeit("_get_truck_routes_to_stations")
     def _get_truck_routes_to_stations(
         self, origin_point: Point, dest_point: Point, nearest_stations: Dict
     ) -> Optional[Dict]:
@@ -1915,6 +1939,7 @@ class RouteOptimizer:
             print(f"Error getting truck routes to stations: {e}")
             return None
 
+    @timeit("_find_train_routes_between_stations")
     def _find_train_routes_between_stations(
         self,
         nearest_stations: Dict,
@@ -1951,6 +1976,7 @@ class RouteOptimizer:
             print(f"Error finding train routes between stations: {e}")
             return []
 
+    @timeit("_combine_truck_train_routes")
     def _combine_truck_train_routes(
         self,
         truck_routes: Dict,
@@ -1996,6 +2022,7 @@ class RouteOptimizer:
             print(f"Error combining truck train routes: {e}")
             return []
 
+    @timeit("_find_train_transfer_routes")
     def _find_train_transfer_routes(
         self, origin_station: Dict, dest_station: Dict, max_transfers: int
     ) -> List[Dict]:
@@ -2048,6 +2075,7 @@ class RouteOptimizer:
             print(f"Error finding train transfer routes: {e}")
             return []
 
+    @timeit("_create_combined_route")
     def _create_combined_route(
         self,
         truck_routes: Dict,
@@ -2136,6 +2164,7 @@ class RouteOptimizer:
             print(f"Error creating combined route: {e}")
             return None
 
+    @timeit("_create_combined_geometry")
     def _create_combined_geometry(
         self,
         origin_to_station: Dict,
@@ -2216,6 +2245,7 @@ class RouteOptimizer:
             # Fallback to simple straight line
             return LineString([(0, 0), (0, 0), (0, 0), (0, 0)])
 
+    @timeit("_get_truck_routes_to_ports")
     def _get_truck_routes_to_ports(
         self, origin_point: Point, dest_point: Point, nearest_ports: Dict, input_departure_hour: str = '', origin_name: str = '', destination_name: str = '', weight_tons: float = 0
     ) -> Optional[Dict]:
@@ -2304,6 +2334,7 @@ class RouteOptimizer:
             print(f"Error getting truck routes to ports: {e}")
             return None
 
+    @timeit("_find_ship_routes_between_ports")
     def _find_ship_routes_between_ports(
         self,
         nearest_ports: Dict,
@@ -2356,6 +2387,7 @@ class RouteOptimizer:
             print(f"Error finding ship routes between ports: {e}")
             return []
 
+    @timeit("_combine_truck_ship_routes")
     def _combine_truck_ship_routes(
         self,
         truck_routes: Dict,
@@ -2402,6 +2434,7 @@ class RouteOptimizer:
             print(f"Error combining truck ship routes: {e}")
             return []
 
+    @timeit("_find_ship_transfer_routes")
     def _find_ship_transfer_routes(
         self, origin_port: Dict, dest_port: Dict, max_transfers: int, weight_tons: float
     ) -> List[Dict]:
@@ -2485,6 +2518,7 @@ class RouteOptimizer:
             print(f"Error finding ship transfer routes: {e}")
             return []
 
+    @timeit("_create_combined_ship_route")
     def _create_combined_ship_route(
         self,
         truck_routes: Dict,
@@ -2680,12 +2714,14 @@ class RouteOptimizer:
             print(f"Error creating combined ship route: {e}")
             return None
 
+    @timeit("_create_combined_ship_geometry")
     def split_coords_into_segments(self, coords):
         segments = []
         for i in range(len(coords) - 1):
             segments.append([coords[i], coords[i + 1]])
         return segments
     
+    @timeit("_create_combined_ship_geometry")
     def _create_combined_ship_geometry(
         self,
         origin_to_port: Dict,
@@ -2766,6 +2802,7 @@ class RouteOptimizer:
             # Fallback to simple straight line
             return LineString([(0, 0), (0, 0), (0, 0), (0, 0)])
     
+    @timeit("_create_ship_coords")
     def _create_ship_coords(self, origin_port, dest_port, transfer_ports):
         # Create ship segment
         if transfer_ports:
@@ -2795,6 +2832,7 @@ class RouteOptimizer:
                 (dest_port["X"], dest_port["Y"]),
             ]
 
+    @timeit("_get_geometry_coords")
     def _get_geometry_coords(self, geometry) -> List[Tuple[float, float]]:
         """Get coordinates from geometry (handles both Shapely and GeoJSON)"""
         if isinstance(geometry, dict):
@@ -2834,6 +2872,7 @@ class RouteOptimizer:
                 return all_coords
         return []
 
+    @timeit("_get_truck_route_info")
     def _get_truck_route_info(
         self, start_point: Point, end_point: Point
     ) -> Optional[Dict]:
@@ -2868,6 +2907,7 @@ class RouteOptimizer:
             "geometry": LineString([start_point, end_point]),
         }
 
+    @timeit("_get_ship_route_info")
     def _get_ship_route_info(self, origin_port: str, dest_port: str) -> Optional[Dict]:
         """Get ship route information"""
         route = self.ferry_time[
@@ -2914,6 +2954,7 @@ class RouteOptimizer:
 
         return None
 
+    @timeit("_get_train_route_info")
     def _get_train_route_info(
         self, origin_station_code: str, dest_station_code: str
     ) -> Optional[Dict]:
@@ -2948,6 +2989,7 @@ class RouteOptimizer:
 
         return None
 
+    @timeit("_calculate_distance")
     def _calculate_distance(
         self, lat1: float, lon1: float, lat2: float, lon2: float
     ) -> float:
@@ -2956,6 +2998,7 @@ class RouteOptimizer:
         _, _, distance = geod.inv(lon1, lat1, lon2, lat2)
         return distance
 
+    @timeit("_calculate_co2_emissions")
     def _calculate_co2_emissions(
         self, mode: str, weight_tons: float, distance_km: float
     ) -> float:
@@ -2964,6 +3007,7 @@ class RouteOptimizer:
             return weight_tons * distance_km * self.co2_factors[mode]
         return 0
 
+    @timeit("_find_optimal_routes")
     def _find_optimal_routes(self, routes: List[Dict]) -> Dict:
         """Find optimal routes by different criteria"""
         if not routes:
@@ -2989,6 +3033,7 @@ class RouteOptimizer:
             "greenest": create_route_summary(min_co2_route),
         }
     
+    @timeit("save_results")
     def save_results(self, results: Dict, output_path: str):
         """Save results to GeoJSON file"""
         # Convert results to GeoJSON format
@@ -2997,6 +3042,7 @@ class RouteOptimizer:
         with open(output_path, "w", encoding="utf-8") as f:
             json.dump(geojson_data, f, ensure_ascii=False, indent=2)
 
+    @timeit("_convert_to_geojson")
     def _convert_to_geojson(self, results: Dict) -> Dict:
         """Convert results to GeoJSON format"""
         from shapely import wkt
@@ -3058,6 +3104,7 @@ class RouteOptimizer:
 
         return geojson
 
+    @timeit("_find_ship_routes_with_transfer")
     def _find_ship_routes_with_transfer(
         self,
         origin_point: Point,
@@ -3157,6 +3204,7 @@ class RouteOptimizer:
 
         return routes
 
+    @timeit("_calculate_ship_route_with_transfer")
     def _calculate_ship_route_with_transfer(
         self,
         origin_point: Point,
@@ -3242,6 +3290,7 @@ class RouteOptimizer:
 
         return None
 
+    @timeit("_find_train_routes_with_transfer")
     def _find_train_routes_with_transfer(
         self,
         origin_point: Point,
@@ -3328,6 +3377,7 @@ class RouteOptimizer:
 
         return routes
 
+    @timeit("_calculate_train_route_with_transfer")
     def _calculate_train_route_with_transfer(
         self,
         origin_point: Point,
@@ -3420,6 +3470,7 @@ class RouteOptimizer:
 
         return None
 
+    @timeit("_get_train_route_info")
     def _get_train_route_info(
         self, origin_station_code: int, dest_station_code: int
     ) -> Optional[Dict]:
@@ -3452,6 +3503,7 @@ class RouteOptimizer:
 
         return None
 
+    @timeit("_find_single_ship_route_with_transfer")
     def _find_single_ship_route_with_transfer(
         self,
         origin_point: Point,
@@ -3488,6 +3540,7 @@ class RouteOptimizer:
             print(f"Error finding single ship route with transfer: {e}")
             return None
 
+    @timeit("_find_single_train_route_with_transfer")
     def _find_single_train_route_with_transfer(
         self,
         origin_point: Point,
@@ -3524,6 +3577,7 @@ class RouteOptimizer:
             print(f"Error finding single train route with transfer: {e}")
             return None
 
+    @timeit("_init_database")
     def _init_database(self):
         """Initialize database connection pool"""
         if not PSYCOPG2_AVAILABLE:
@@ -3556,6 +3610,7 @@ class RouteOptimizer:
             print("Truck routes will use fallback method")
             self.db_pool = None
 
+    @timeit("_db_query_one")
     def _db_query_one(self, query: str, params: tuple) -> Optional[Dict]:
         """Execute a single query and return one result"""
         if not self.db_pool:
@@ -3576,6 +3631,7 @@ class RouteOptimizer:
         finally:
             self.db_pool.putconn(conn)
 
+    @timeit("_db_query_all")
     def _db_query_all(self, query: str, params: tuple) -> Optional[List[Dict]]:
         """Execute a query and return all results"""
         if not self.db_pool:
@@ -3599,6 +3655,7 @@ class RouteOptimizer:
         finally:
             self.db_pool.putconn(conn)
 
+    @timeit("_nearest_node_id")
     def _nearest_node_id(self, lon: float, lat: float) -> Optional[Dict]:
             cache_key = (round(lon, 6), round(lat, 6))
             if cache_key in self._node_cache:
@@ -3608,6 +3665,7 @@ class RouteOptimizer:
             self._node_cache[cache_key] = result
             return result
 
+    @timeit("_get_node_component")
     def _get_node_component(
         self, start_node: int, end_node: int
     ) -> Optional[List[Dict]]:
@@ -3615,6 +3673,7 @@ class RouteOptimizer:
         sql = "SELECT component FROM jpn_components WHERE node IN (%s, %s)"
         return self._db_query_all(sql, (start_node, end_node))
 
+    @timeit("_route_truck_mm")
     def _route_truck_mm(
         self,
         o_lon: float,
@@ -3793,6 +3852,7 @@ class RouteOptimizer:
         self._route_cache[cache_key] = route
         return route
 
+    @timeit("_get_truck_route_info_db")
     def _get_truck_route_info_db(
         self, start_point: Point, end_point: Point, toll_per_km: float = 30.0
     ) -> Optional[Dict]:
