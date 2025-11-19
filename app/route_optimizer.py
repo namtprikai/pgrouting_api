@@ -625,9 +625,14 @@ class RouteOptimizer:
             )
 
             if truck_route_2:
-                truck_route_2_geometry = LineString(
-                    truck_route_2["geometry"]["coordinates"]
-                )
+                coords = truck_route_2["geometry"]["coordinates"]
+
+                # Nếu nested list → flatten
+                if isinstance(coords[0][0], list):
+                    coords = [pt for segment in coords for pt in segment]
+
+                truck_route_2_geometry = LineString(coords)
+
                 truck_route_2_distance = truck_route_2["distance_km"]
             else:
                 stD_point = Point(float(stD["lon"]), float(stD["lat"]))
@@ -793,10 +798,14 @@ class RouteOptimizer:
                 stD["slon"], stD["slat"], dest_point.x, dest_point.y
             )
             if stD_dest_routes:
-                stD_dest_geometry = LineString(
-                    stD_dest_routes["geometry"]["coordinates"]
-                )
+                coords = stD_dest_routes["geometry"]["coordinates"]
+
+                if isinstance(coords[0][0], list):
+                    coords = [pt for seg in coords for pt in seg]
+
+                stD_dest_geometry = LineString(coords)
                 stD_dest_distance = stD_dest_routes["distance_km"]
+
             else:
                 stD_point = (stD["slon"], stD["slat"])
                 # dest_point = (dest_point.x, dest_point.y)
@@ -1098,9 +1107,16 @@ class RouteOptimizer:
             )
 
             if truck_route_4:
-                truck_route_4_geometry = LineString(
-                    truck_route_4["geometry"]["coordinates"]
-                )
+                coords = truck_route_4["geometry"]["coordinates"]
+
+                # FIX: flatten nếu là dạng [[...]]
+                if isinstance(coords[0][0], list):
+                    flat = []
+                    for seg in coords:
+                        flat.extend(seg)
+                    coords = flat
+
+                truck_route_4_geometry = LineString(coords)
                 truck_route_4_distance = truck_route_4["distance_km"]
             else:
                 stD_2_point = Point(float(stD_2["slon"]), float(stD_2["slat"]))
@@ -1339,9 +1355,14 @@ class RouteOptimizer:
             )
 
             if truck_route_3:
-                truck_route_3_geometry = LineString(
-                    truck_route_3["geometry"]["coordinates"]
-                )
+                coords = truck_route_3["geometry"]["coordinates"]
+
+                # Nếu là MultiLineString hoặc list 2 cấp → flatten
+                if isinstance(coords[0][0], list):
+                    coords = [pt for segment in coords for pt in segment]
+
+                truck_route_3_geometry = LineString(coords)
+
                 truck_route_3_distance = truck_route_3["distance_km"]
             else:
                 stD_1_point = Point(float(stD_1["lon"]), float(stD_1["lat"]))

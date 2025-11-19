@@ -1,0 +1,127 @@
+------------------- truc truck_train_ship_train -------------------
+{
+    "origin_name":"Trạm xe tải Kasai",
+    "origin_lat":33.8041,
+    "origin_lon":133.9478, 
+    "dest_name":"Nhà ga Miyazaki",
+    "dest_lat":37.9858,
+    "dest_lon":140.2194,
+    "mode": "truck_train_ship_train"
+}
+
+{
+    "origin_name":"Trạm xe tải Kasai",
+    "origin_lat":32.9541,
+    "origin_lon":131.0510, 
+    "dest_name":"Nhà ga Miyazaki",
+    "dest_lat":35.5541,
+    "dest_lon":137.6110,
+    "mode": "truck_train_ship_train"
+}
+
+{
+    "origin_name":"Trạm xe tải Kasai",
+    "origin_lat":34.2554,
+    "origin_lon":131.4998, 
+    "dest_name":"Nhà ga Miyazaki",
+    "dest_lat":43.2641,
+    "dest_lon":141.9885,
+    "mode": "truck_train_ship_train"
+}
+
+------------------- truck_only -------------------
+{
+    "origin_name":"Trạm xe tải Kasai",
+    "origin_lat":35.4437,
+    "origin_lon":137.3039, 
+    "dest_name":"Nhà ga Miyazaki",
+    "dest_lat":37.3407,
+    "dest_lon":140.5544,
+    "mode": "truck_only"
+} 
+ -> thẳng
+
+{
+    "origin_name":"Trạm xe tải Kasai",
+    "origin_lat":35.4437,
+    "origin_lon":137.3039, 
+    "dest_name":"Nhà ga Miyazaki",
+    "dest_lat":34.9893,
+    "dest_lon":136.0937,
+    "mode": "truck_only"
+}
+ -> oke
+
+
+------------------- truck_train -------------------
+{
+    "origin_name":"Trạm xe tải Kasai",
+    "origin_lat":35.4437,
+    "origin_lon":137.3039, 
+    "dest_name":"Nhà ga Miyazaki",
+    "dest_lat":34.9893,
+    "dest_lon":136.0937,
+    "mode": "truck_train"
+}
+
+{
+    "origin_name":"Trạm xe tải Kasai",
+    "origin_lat":33.7684,
+    "origin_lon":133.6627, 
+    "dest_name":"Nhà ga Miyazaki",
+    "dest_lat":34.3463,
+    "dest_lon":135.8578,
+    "mode": "truck_train"
+}
+
+{
+    "origin_name":"Trạm xe tải Kasai",
+    "origin_lat":32.9541,
+    "origin_lon":131.0510, 
+    "dest_name":"Nhà ga Miyazaki",
+    "dest_lat":35.5541,
+    "dest_lon":137.6110,
+    "mode": "truck_train"
+}
+
+------------------- truck_train_ship -------------------
+{
+    "origin_name":"Trạm xe tải Kasai",
+    "origin_lat":33.7684,
+    "origin_lon":133.6627, 
+    "dest_name":"Nhà ga Miyazaki",
+    "dest_lat":34.3463,
+    "dest_lon":135.8578,
+    "mode": "truck_train_ship"
+}
+
+{
+    "origin_name":"Trạm xe tải Kasai",
+    "origin_lat":32.9541,
+    "origin_lon":131.0510, 
+    "dest_name":"Nhà ga Miyazaki",
+    "dest_lat":35.5541,
+    "dest_lon":137.6110,
+    "mode": "truck_train_ship"
+}
+
+------------------- truck_ship_train -------------------
+{
+    "origin_name":"Trạm xe tải Kasai",
+    "origin_lat":32.9541,
+    "origin_lon":131.0510, 
+    "dest_name":"Nhà ga Miyazaki",
+    "dest_lat":35.5541,
+    "dest_lon":137.6110,
+    "mode": "truck_ship_train"
+}
+
+{
+    "origin_name":"Trạm xe tải Kasai",
+    "origin_lat":34.2554,
+    "origin_lon":131.4998, 
+    "dest_name":"Nhà ga Miyazaki",
+    "dest_lat":43.2641,
+    "dest_lon":141.9885,
+    "mode": "truck_ship_train"
+}

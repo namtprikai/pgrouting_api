@@ -1,4 +1,3 @@
-output/*
 __pycache__/
 .venv/
 importer_data/japan_highways.osm.bz2
