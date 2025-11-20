@@ -71,7 +71,7 @@ class RouteOptimizer:
         self.port_list = None
 
         # CO2 emission factors (g CO2 per ton-kilometer)
-        self.co2_factors = {"truck": 43, "train": 20, "ship": 10}
+        self.co2_factors = {"truck": 207, "train": 19, "ship": 42}
 
         # Initialize database connection
         self._init_database()
