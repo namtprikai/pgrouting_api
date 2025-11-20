@@ -5,6 +5,11 @@ import json
 from datetime import datetime, timedelta
 from shapely import wkt
 import numpy as np
+from typing import Any, Dict, List
+import pandas as pd
+import geopandas as gpd
+
+RouteDict = Dict[str, Any]
 
 
 def _is_num(x):
@@ -185,7 +190,7 @@ def build_result_segment(
     geometry,
     total_distance_meters: float,
     data_infos: dict,
-    mode: str
+    mode: str,
 ):
     # km từ meters (an toàn, không crash nếu None)
     total_distance_km = (
@@ -252,11 +257,13 @@ def linestring_to_geojson_feature(geom, props=None, precision=6):
     print("---------------------------------------------------------", "\n")
     return feature
 
+
 def add_hours(time_str: str, hours: float = 3.0) -> str:
     # Parse "HH:MM"
     base_time = datetime.strptime(time_str, "%H:%M")
     new_time = base_time + timedelta(hours=hours)
     return new_time.strftime("%H:%M")
+
 
 def create_features(route):
     try:
@@ -294,9 +301,7 @@ def create_features(route):
             try:
                 geometry = wkt.loads(str(geometry))
             except:
-                print(
-                    f"Warning: Could not convert geometry: {type(geometry)}"
-                )
+                print(f"Warning: Could not convert geometry: {type(geometry)}")
                 return None
 
         # Create feature
@@ -308,23 +313,15 @@ def create_features(route):
                 "properties": convert_numpy_types(
                     {
                         "vehicle": route.get("vehicle", ""),
-                        "departure_time": route.get(
-                            "departure_time", "00:00"
-                        ),
+                        "departure_time": route.get("departure_time", "00:00"),
                         "arrival_time": route.get("arrival_time", "00:00"),
-                        "total_time_minutes": route.get(
-                            "total_time_minutes", 0
-                        ),
-                        "total_distance_km": route.get(
-                            "total_distance_km", 0
-                        ),
+                        "total_time_minutes": route.get("total_time_minutes", 0),
+                        "total_distance_km": route.get("total_distance_km", 0),
                         "total_co2_emissions_grams": route.get(
                             "co2_emissions_grams", 0
                         ),
                         "origin_name": route.get("origin_name", ""),
-                        "destination_name": route.get(
-                            "destination_name", ""
-                        ),
+                        "destination_name": route.get("destination_name", ""),
                     }
                 ),
             }
@@ -339,33 +336,26 @@ def create_features(route):
                 "properties": convert_numpy_types(
                     {
                         "vehicle": route.get("vehicle", ""),
-                        "departure_time": route.get(
-                            "departure_time", "00:00"
-                        ),
+                        "departure_time": route.get("departure_time", "00:00"),
                         "arrival_time": route.get("arrival_time", "00:00"),
-                        "total_time_minutes": route.get(
-                            "total_time_minutes", 0
-                        ),
-                        "total_distance_km": route.get(
-                            "total_distance_km", 0
-                        ),
+                        "total_time_minutes": route.get("total_time_minutes", 0),
+                        "total_distance_km": route.get("total_distance_km", 0),
                         "total_co2_emissions_grams": route.get(
                             "co2_emissions_grams", 0
                         ),
                         "origin_name": route.get("origin_name", ""),
-                        "destination_name": route.get(
-                            "destination_name", ""
-                        ),
+                        "destination_name": route.get("destination_name", ""),
                     }
                 ),
             }
-        
+
         return new_feature
 
     except Exception as e:
         print(
             f"Warning: Could not convert geometry for route {route.get('name', '')}: {e}"
         )
+
 
 def convert_numpy_types(obj):
     """Convert numpy types to Python native types"""
@@ -381,3 +371,97 @@ def convert_numpy_types(obj):
         return [convert_numpy_types(item) for item in obj]
     else:
         return obj
+
+
+def process_train_data(schedule_data: pd.DataFrame) -> List[RouteDict]:
+    """
+    Convert train schedule DataFrame to list[dict] in the unified route format.
+
+    Expected columns in schedule_data:
+        - origin_name
+        - origin_lat
+        - origin_lon
+        - destination_name
+        - destination_lat
+        - destination_lon
+        - departure_time  (str, "HH:MM")
+        - arrival_time    (str, "HH:MM")
+        - total_time_minutes (numeric)
+    """
+    routes: List[RouteDict] = []
+
+    # iterate over rows
+    for _, row in schedule_data.iterrows():
+        routes.append(
+            {
+                "depature_name": row["origin_name"],
+                "depature_lat": float(row["origin_lat"]),
+                "depature_lon": float(row["origin_lon"]),
+                "arrival_name": row["destination_name"],
+                "arrival_lat": float(row["destination_lat"]),
+                "arrival_lon": float(row["destination_lon"]),
+                "departure_time": str(row["departure_time"]),  # "HH:MM"
+                "arrival_time": str(row["arrival_time"]),  # "HH:MM"
+                "route_time_minutes": float(row["total_time_minutes"]),
+            }
+        )
+
+    return routes
+
+
+def process_ship_data(
+    stations_data: gpd.GeoDataFrame,
+    schedules_data: pd.DataFrame,
+) -> List[RouteDict]:
+    """
+    Convert ship schedule data into list[dict] unified route format.
+
+    stations_data (GeoDataFrame) expected columns:
+        - code       (unique ID used in schedules_data)
+        - name
+        - lat
+        - lon
+        - geometry   (optional, not used here)
+
+    schedules_data (DataFrame) expected columns:
+        - origin_code
+        - dest_code
+        - departure_time      (str, "HH:MM")
+        - arrival_time        (str, "HH:MM")
+        - total_time_minutes  (numeric)
+    """
+
+    # Build a lookup dict: code -> { name, lat, lon }
+    # Adjust "code", "name", "lat", "lon" to match your real column names.
+    station_lookup: Dict[Any, Dict[str, Any]] = stations_data.set_index("code")[
+        ["name", "lat", "lon"]
+    ].to_dict(orient="index")
+
+    routes: List[RouteDict] = []
+
+    for _, row in schedules_data.iterrows():
+        origin_code = row["origin_code"]
+        dest_code = row["dest_code"]
+
+        origin_station = station_lookup.get(origin_code)
+        dest_station = station_lookup.get(dest_code)
+
+        # Skip if station code is missing in stations_data
+        if origin_station is None or dest_station is None:
+            continue
+
+        routes.append(
+            {
+                "depature_name": origin_station["name"],
+                "depature_lat": float(origin_station["lat"]),
+                "depature_lon": float(origin_station["lon"]),
+                "arrival_name": dest_station["name"],
+                "arrival_lat": float(dest_station["lat"]),
+                "arrival_lon": float(dest_station["lon"]),
+                "departure_time": str(row["departure_time"]),  # "HH:MM"
+                "arrival_time": str(row["arrival_time"]),  # "HH:MM"
+                "route_time_minutes": float(row["total_time_minutes"]),
+            }
+        )
+
+    return routes
