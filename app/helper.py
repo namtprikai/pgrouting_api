@@ -466,3 +466,126 @@ def calc_wait_minutes(arrival_time: str, departure_time: str) -> float:
 
     delta = departure_time_dt - arrival_time_dt
     return delta.total_seconds() / 60.0  # minutes
+
+def process_train_data(
+    schedules_data: pd.DataFrame, stations_data: gpd.GeoDataFrame
+) -> List[RouteDict]:
+    """
+    Convert train schedule DataFrame to list[dict] in the unified route format.
+
+    Expected columns in schedule_data:
+        - origin_name
+        - origin_lat
+        - origin_lon
+        - destination_name
+        - destination_lat
+        - destination_lon
+        - departure_time  (str, "HH:MM")
+        - arrival_time    (str, "HH:MM")
+        - total_time_minutes (numeric)
+    """
+    routes: List[RouteDict] = []
+
+    station_lookup = (
+        stations_data.drop_duplicates(subset="Station_Name", keep="first")
+        .set_index("Station_Name")[["lon", "lat"]]
+        .to_dict(orient="index")
+    )
+
+    for _, row in schedules_data.iterrows():
+        dep_name = row["Departure_Station_Name"]
+        arr_name = row["Arrival_Station_Name"]
+
+        dep_station = station_lookup.get(dep_name)
+        arr_station = station_lookup.get(arr_name)
+
+        # Skip if station not found in lookup
+        if not dep_station or not arr_station:
+            continue
+
+        duration_value = row["train_Duration"]
+
+        if pd.isna(duration_value):
+            # no duration -> skip or set to 0; here we skip
+            continue
+
+        if isinstance(duration_value, pd.Timedelta):
+            # convert Timedelta -> minutes
+            route_minutes = duration_value.total_seconds() / 60.0
+        else:
+            # already numeric/string -> cast to float
+            route_minutes = float(duration_value)
+
+        routes.append(
+            {
+                "depature_name": dep_name,
+                "depature_lat": dep_station["lat"],
+                "depature_lon": dep_station["lon"],
+                "arrival_name": arr_name,
+                "arrival_lat": arr_station["lat"],
+                "arrival_lon": arr_station["lon"],
+                "departure_time": str(row["Departure_Time"]),  # "HH:MM"
+                "arrival_time": str(row["Arrival_Time"]),  # "HH:MM"
+                "route_time_minutes": route_minutes,
+            }
+        )
+
+    return routes
+
+
+def process_ship_data(
+    stations_data: gpd.GeoDataFrame,
+    schedules_data: pd.DataFrame,
+) -> List[RouteDict]:
+    """
+    Convert ship schedule data into list[dict] unified route format.
+
+    stations_data (GeoDataFrame) expected columns:
+        - code       (unique ID used in schedules_data)
+        - name
+        - lat
+        - lon
+        - geometry   (optional, not used here)
+
+    schedules_data (DataFrame) expected columns:
+        - origin_code
+        - dest_code
+        - departure_time      (str, "HH:MM")
+        - arrival_time        (str, "HH:MM")
+        - total_time_minutes  (numeric)
+    """
+
+    # Build a lookup dict: code -> { name, lat, lon }
+    # Adjust "code", "name", "lat", "lon" to match your real column names.
+    station_lookup: Dict[Any, Dict[str, Any]] = stations_data.set_index("code")[
+        ["name", "lat", "lon"]
+    ].to_dict(orient="index")
+
+    routes: List[RouteDict] = []
+
+    for _, row in schedules_data.iterrows():
+        origin_code = row["origin_code"]
+        dest_code = row["dest_code"]
+
+        origin_station = station_lookup.get(origin_code)
+        dest_station = station_lookup.get(dest_code)
+
+        # Skip if station code is missing in stations_data
+        if origin_station is None or dest_station is None:
+            continue
+
+        routes.append(
+            {
+                "depature_name": origin_station["name"],
+                "depature_lat": float(origin_station["lat"]),
+                "depature_lon": float(origin_station["lon"]),
+                "arrival_name": dest_station["name"],
+                "arrival_lat": float(dest_station["lat"]),
+                "arrival_lon": float(dest_station["lon"]),
+                "departure_time": str(row["departure_time"]),  # "HH:MM"
+                "arrival_time": str(row["arrival_time"]),  # "HH:MM"
+                "route_time_minutes": float(row["total_time_minutes"]),
+            }
+        )
+
+    return routes

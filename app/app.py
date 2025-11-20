@@ -10,7 +10,7 @@ from pydantic_settings import BaseSettings
 from shapely import LineString
 import geopandas as gpd
 from route_optimizer import RouteOptimizer
-from .helper import process_ship_data, process_train_data
+from helper import process_ship_data, process_train_data
 from constant import *
 import globals
 from helper import create_response
@@ -124,26 +124,37 @@ app = FastAPI(title="Multimodal Truck/Train/Ship Router (FastAPI)")
 
 @app.get("/api/routes-map")
 def get_route_map():
-    route_optimizer = RouteOptimizer()
+    data_folder_path = FOLDER_DATA
+    db_config = {
+        "host": settings.PGHOST,
+        "port": settings.PGPORT,
+        "database": settings.PGDATABASE,
+        "user": settings.PGUSER,
+        "password": settings.PGPASSWORD,
+    }
+
+    optimizer = RouteOptimizer(data_folder_path, db_config)
+
     # Load data
-    route_optimizer._load_ferry_schedule()
-    route_optimizer._load_station_data()
-    route_optimizer._load_train_schedule()
+    optimizer._load_ferry_schedule()
+    optimizer._load_station_data()
+    optimizer._load_train_schedule()
 
     # Process Ship data
-    ship_schedule = route_optimizer.ferry_time
-    ship_data = process_ship_data(ship_schedule)
+    # ship_schedule = route_optimizer.ferry_time
+    # ship_data = process_ship_data(ship_schedule)
 
     # Process Train data
-    train_stations = route_optimizer.station_gdf
-    train_schedules = route_optimizer.train_time
+    train_stations = optimizer.station_gdf
+    train_schedules = optimizer.train_time
 
     train_data = process_train_data(
         stations_data=train_stations, schedules_data=train_schedules
     )
 
     # Combine data
-    combined_data = {"ship_routes": ship_data, "train_routes": train_data}
+    # combined_data = {"ship_routes": ship_data, "train_routes": train_data}
+    combined_data = {"train_routes": train_data}
 
     return combined_data
 
