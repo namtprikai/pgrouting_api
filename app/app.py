@@ -134,9 +134,9 @@ def get_route_map():
         }
     route_optimizer = RouteOptimizer(data_folder_path, db_config)
     # Load data
-    route_optimizer._load_ferry_schedule()
-    route_optimizer._load_station_data()
-    route_optimizer._load_train_schedule()
+    optimizer._load_ferry_schedule()
+    optimizer._load_station_data()
+    optimizer._load_train_schedule()
 
     # Process Ship data
     ship_data = process_ship_data(
@@ -148,13 +148,20 @@ def get_route_map():
     # Process Train data
     # train_stations = route_optimizer.station_gdf
     # train_schedules = route_optimizer.train_time
+    # ship_schedule = route_optimizer.ferry_time
+    # ship_data = process_ship_data(ship_schedule)
+
+    # Process Train data
+    train_stations = optimizer.station_gdf
+    train_schedules = optimizer.train_time
 
     # train_data = process_train_data(
     #     stations_data=train_stations, schedules_data=train_schedules
     # )
 
     # Combine data
-    combined_data = {"ship_routes": ship_data}
+    # combined_data = {"ship_routes": ship_data, "train_routes": train_data}
+    combined_data = {"train_routes": train_data}
 
     return combined_data
 

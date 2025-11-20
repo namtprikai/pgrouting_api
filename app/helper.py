@@ -373,7 +373,9 @@ def convert_numpy_types(obj):
         return obj
 
 
-def process_train_data(schedule_data: pd.DataFrame) -> List[RouteDict]:
+def process_train_data(
+    schedules_data: pd.DataFrame, stations_data: gpd.GeoDataFrame
+) -> List[RouteDict]:
     """
     Convert train schedule DataFrame to list[dict] in the unified route format.
 
@@ -390,19 +392,47 @@ def process_train_data(schedule_data: pd.DataFrame) -> List[RouteDict]:
     """
     routes: List[RouteDict] = []
 
-    # iterate over rows
-    for _, row in schedule_data.iterrows():
+    station_lookup = (
+        stations_data.drop_duplicates(subset="Station_Name", keep="first")
+        .set_index("Station_Name")[["lon", "lat"]]
+        .to_dict(orient="index")
+    )
+
+    for _, row in schedules_data.iterrows():
+        dep_name = row["Departure_Station_Name"]
+        arr_name = row["Arrival_Station_Name"]
+
+        dep_station = station_lookup.get(dep_name)
+        arr_station = station_lookup.get(arr_name)
+
+        # Skip if station not found in lookup
+        if not dep_station or not arr_station:
+            continue
+
+        duration_value = row["train_Duration"]
+
+        if pd.isna(duration_value):
+            # no duration -> skip or set to 0; here we skip
+            continue
+
+        if isinstance(duration_value, pd.Timedelta):
+            # convert Timedelta -> minutes
+            route_minutes = duration_value.total_seconds() / 60.0
+        else:
+            # already numeric/string -> cast to float
+            route_minutes = float(duration_value)
+
         routes.append(
             {
-                "depature_name": row["origin_name"],
-                "depature_lat": float(row["origin_lat"]),
-                "depature_lon": float(row["origin_lon"]),
-                "arrival_name": row["destination_name"],
-                "arrival_lat": float(row["destination_lat"]),
-                "arrival_lon": float(row["destination_lon"]),
-                "departure_time": str(row["departure_time"]),  # "HH:MM"
-                "arrival_time": str(row["arrival_time"]),  # "HH:MM"
-                "route_time_minutes": float(row["total_time_minutes"]),
+                "depature_name": dep_name,
+                "depature_lat": dep_station["lat"],
+                "depature_lon": dep_station["lon"],
+                "arrival_name": arr_name,
+                "arrival_lat": arr_station["lat"],
+                "arrival_lon": arr_station["lon"],
+                "departure_time": str(row["Departure_Time"]),  # "HH:MM"
+                "arrival_time": str(row["Arrival_Time"]),  # "HH:MM"
+                "route_time_minutes": route_minutes,
             }
         )
 
