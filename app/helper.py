@@ -5,7 +5,11 @@ import json
 from datetime import datetime, timedelta
 from shapely import wkt
 import numpy as np
+from typing import Any, Dict, List
 import pandas as pd
+import geopandas as gpd
+
+RouteDict = Dict[str, Any]
 
 
 def _is_num(x):
@@ -186,7 +190,7 @@ def build_result_segment(
     geometry,
     total_distance_meters: float,
     data_infos: dict,
-    mode: str
+    mode: str,
 ):
     # km từ meters (an toàn, không crash nếu None)
     total_distance_km = (
@@ -253,11 +257,13 @@ def linestring_to_geojson_feature(geom, props=None, precision=6):
     print("---------------------------------------------------------", "\n")
     return feature
 
+
 def add_hours(time_str: str, hours: float = 3.0) -> str:
     # Parse "HH:MM"
     base_time = datetime.strptime(time_str, "%H:%M")
     new_time = base_time + timedelta(hours=hours)
     return new_time.strftime("%H:%M")
+
 
 def create_features(route):
     try:
@@ -295,9 +301,7 @@ def create_features(route):
             try:
                 geometry = wkt.loads(str(geometry))
             except:
-                print(
-                    f"Warning: Could not convert geometry: {type(geometry)}"
-                )
+                print(f"Warning: Could not convert geometry: {type(geometry)}")
                 return None
 
         # Create feature
@@ -366,13 +370,14 @@ def create_features(route):
                     }
                 ),
             }
-        
+
         return new_feature
 
     except Exception as e:
         print(
             f"Warning: Could not convert geometry for route {route.get('name', '')}: {e}"
         )
+
 
 def convert_numpy_types(obj):
     """Convert numpy types to Python native types"""
