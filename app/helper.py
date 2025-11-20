@@ -328,7 +328,7 @@ def create_features(route):
                         ),
                         "total_co2_emissions_grams": (route.get(
                             "total_co2_emissions_grams", 0
-                        ) / 1000),
+                        )),
                     }
                 ),
             }
@@ -362,7 +362,7 @@ def create_features(route):
                         ),
                         "total_co2_emissions_grams": (route.get(
                             "total_co2_emissions_grams", 0
-                        ) / 1000),
+                        )),
                     }
                 ),
             }
