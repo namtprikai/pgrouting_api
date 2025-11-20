@@ -442,56 +442,61 @@ def process_train_data(
 def process_ship_data(
     stations_data: gpd.GeoDataFrame,
     schedules_data: pd.DataFrame,
-) -> List[RouteDict]:
+) -> list[dict]:
     """
-    Convert ship schedule data into list[dict] unified route format.
-
-    stations_data (GeoDataFrame) expected columns:
-        - code       (unique ID used in schedules_data)
-        - name
-        - lat
-        - lon
-        - geometry   (optional, not used here)
-
-    schedules_data (DataFrame) expected columns:
-        - origin_code
-        - dest_code
-        - departure_time      (str, "HH:MM")
-        - arrival_time        (str, "HH:MM")
-        - total_time_minutes  (numeric)
+    Convert ship schedule data into list of dicts in the format:
+    {
+        "depature_name": string,
+        "depature_lat": float,
+        "depature_lon": float,
+        "arrival_name": string,
+        "arrival_lat": float,
+        "arrival_lon": float,
+        "departure_time": string,  # HH:MM
+        "arrival_time": string,    # HH:MM
+        "route_time_minutes": float
+    }
     """
+    routes = []
 
-    # Build a lookup dict: code -> { name, lat, lon }
-    # Adjust "code", "name", "lat", "lon" to match your real column names.
-    station_lookup: Dict[Any, Dict[str, Any]] = stations_data.set_index("code")[
-        ["name", "lat", "lon"]
-    ].to_dict(orient="index")
-
-    routes: List[RouteDict] = []
+    # Tạo lookup port: dùng cột C02_005 (tên port) hoặc X/Y cho lat/lon
+    # Giả sử bạn muốn dùng C02_005 làm code port
+    station_lookup = {}
+    for _, row in stations_data.iterrows():
+        port_name = row["C02_005"]  # port code/tên
+        station_lookup[port_name] = {
+            "name": port_name,
+            "lat": float(row["Y"]),
+            "lon": float(row["X"]),
+        }
 
     for _, row in schedules_data.iterrows():
-        origin_code = row["origin_code"]
-        dest_code = row["dest_code"]
+        dep_code = row["Departure_Location_(National_Land_Numerical_Information_Format)"]
+        arr_code = row["Arrival_Location_(National_Land_Numerical_Information_Format)"]
 
-        origin_station = station_lookup.get(origin_code)
-        dest_station = station_lookup.get(dest_code)
+        dep_station = station_lookup.get(dep_code)
+        arr_station = station_lookup.get(arr_code)
 
-        # Skip if station code is missing in stations_data
-        if origin_station is None or dest_station is None:
+        # Skip nếu port không có trong stations_data
+        if not dep_station or not arr_station:
             continue
 
-        routes.append(
-            {
-                "depature_name": origin_station["name"],
-                "depature_lat": float(origin_station["lat"]),
-                "depature_lon": float(origin_station["lon"]),
-                "arrival_name": dest_station["name"],
-                "arrival_lat": float(dest_station["lat"]),
-                "arrival_lon": float(dest_station["lon"]),
-                "departure_time": str(row["departure_time"]),  # "HH:MM"
-                "arrival_time": str(row["arrival_time"]),  # "HH:MM"
-                "route_time_minutes": float(row["total_time_minutes"]),
-            }
-        )
+        # Thời gian, route_time
+        dep_time = str(row["Departure_Time"])
+        arr_time = str(row["Arrival_Time"])
+        route_time = float(row["Route_Time"]) if not pd.isna(row["Route_Time"]) else None
+
+        routes.append({
+            "depature_name": dep_station["name"],
+            "depature_lat": dep_station["lat"],
+            "depature_lon": dep_station["lon"],
+            "arrival_name": arr_station["name"],
+            "arrival_lat": arr_station["lat"],
+            "arrival_lon": arr_station["lon"],
+            "departure_time": dep_time,
+            "arrival_time": arr_time,
+            "route_time_minutes": route_time,
+        })
 
     return routes
+
