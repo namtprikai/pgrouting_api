@@ -236,7 +236,7 @@ def multimodal_route(payload: MultimodalBody):
             if not show_all:
                 print(f"Saved optimal route by criteria: {criteria}")
 
-            data = results['optimal_routes'][criteria]
+            # data = results['optimal_routes'][criteria]
             departure_time = globals.GLOBAL_STATE["departure_time"]
             arrival_time = globals.GLOBAL_STATE["arrival_time"]
 
