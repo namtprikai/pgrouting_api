@@ -5,6 +5,7 @@ import json
 from datetime import datetime, timedelta
 from shapely import wkt
 import numpy as np
+import pandas as pd
 
 
 def _is_num(x):
@@ -196,7 +197,7 @@ def build_result_segment(
 
     # Lấy các key cố định từ data_infos (dùng .get để tránh KeyError)
     fixed_fields = {
-        "co2_emissions_grams": data_infos.get("co2_emissions"),
+        "total_co2_emissions_grams": data_infos.get("co2_emissions"),
         "origin_port": data_infos.get("origin_port"),
         "dest_port": data_infos.get("dest_port"),
         "ship_time_hours": data_infos.get("ship_time"),
@@ -308,23 +309,26 @@ def create_features(route):
                 "properties": convert_numpy_types(
                     {
                         "vehicle": route.get("vehicle", ""),
+                        "origin_name": route.get("origin_name", ""),
+                        "destination_name": route.get(
+                            "destination_name", ""
+                        ),
                         "departure_time": route.get(
                             "departure_time", "00:00"
                         ),
                         "arrival_time": route.get("arrival_time", "00:00"),
+                        "total_wait_time_before_departure_minutes": route.get(
+                            "total_wait_time_before_departure_minutes", 0
+                        ),
                         "total_time_minutes": route.get(
                             "total_time_minutes", 0
                         ),
                         "total_distance_km": route.get(
                             "total_distance_km", 0
                         ),
-                        "total_co2_emissions_grams": route.get(
-                            "co2_emissions_grams", 0
-                        ),
-                        "origin_name": route.get("origin_name", ""),
-                        "destination_name": route.get(
-                            "destination_name", ""
-                        ),
+                        "total_co2_emissions_grams": (route.get(
+                            "total_co2_emissions_grams", 0
+                        ) / 1000),
                     }
                 ),
             }
@@ -339,23 +343,26 @@ def create_features(route):
                 "properties": convert_numpy_types(
                     {
                         "vehicle": route.get("vehicle", ""),
+                        "origin_name": route.get("origin_name", ""),
+                        "destination_name": route.get(
+                            "destination_name", ""
+                        ),
                         "departure_time": route.get(
                             "departure_time", "00:00"
                         ),
                         "arrival_time": route.get("arrival_time", "00:00"),
+                        "total_wait_time_before_departure_minutes": route.get(
+                            "total_wait_time_before_departure_minutes", 0
+                        ),
                         "total_time_minutes": route.get(
                             "total_time_minutes", 0
                         ),
                         "total_distance_km": route.get(
                             "total_distance_km", 0
                         ),
-                        "total_co2_emissions_grams": route.get(
-                            "co2_emissions_grams", 0
-                        ),
-                        "origin_name": route.get("origin_name", ""),
-                        "destination_name": route.get(
-                            "destination_name", ""
-                        ),
+                        "total_co2_emissions_grams": (route.get(
+                            "total_co2_emissions_grams", 0
+                        ) / 1000),
                     }
                 ),
             }
@@ -381,3 +388,70 @@ def convert_numpy_types(obj):
         return [convert_numpy_types(item) for item in obj]
     else:
         return obj
+
+def create_response(origin_name, origin_lat, origin_lon, destination_name, destination_lat, destination_lon, result):
+    summary = {
+        'origin_name': origin_name,
+        'origin_lat': origin_lat,
+        'origin_lon': origin_lon,
+        
+        'destination_name': destination_name,
+        'destination_lat': destination_lat,
+        'destination_lon': destination_lon,
+        
+        'result': result
+    }
+    return summary
+
+def calc_total_wait_time_before_departure_minutes(departure_time, arrival_time):
+    return departure_time - arrival_time
+
+def parse_time(time_str):
+    return datetime.strptime(time_str, "%H:%M")
+
+def find_ship_by_departure_time(routes: pd.DataFrame, arrival_time_buffer_wait_time):
+    try:
+        prev_arrival = parse_time(arrival_time_buffer_wait_time)
+        ships = []
+        
+        for _, row in routes.iterrows():
+            dep_str = row["Departure_Time"]
+            dep_time = parse_time(dep_str)
+
+            # Nếu Departure_Time < arrival_time trước → coi như xuất phát ngày hôm sau
+            # if dep_time < prev_arrival:
+            #     dep_time += timedelta(days=1)
+
+            # Giữ những chuyến phù hợp
+            if dep_time >= prev_arrival:
+                ships.append(row)
+
+        # Trả về DataFrame
+        return pd.DataFrame(ships)
+    except Exception as e:
+        print(f"Error find_ship_by_departure_time: {e}")
+        return []
+    
+def calc_wait_minutes(arrival_time: str, departure_time: str) -> float:
+    """
+    Calculate the waiting time (in minutes) from when the truck arrives
+    until the train departs.
+    - truck_arrival_time, train_departure_time: strings in format "H:MM" or "HH:MM"
+    - If the train departure time is earlier than or equal to the truck arrival time
+      on the same day → assume the train departs on the NEXT day.
+    """
+    # Parse "H:MM" or "HH:MM"
+    arrival_time_hours, arrival_time_minutes = map(int, arrival_time.split(":"))
+    departure_time_hours, departure_time_minutes = map(int, departure_time.split(":"))
+
+    # Assign both times to the same dummy date
+    base_date = datetime(1900, 1, 1)
+    arrival_time_dt = base_date.replace(hour=arrival_time_hours, minute=arrival_time_minutes)
+    departure_time_dt = base_date.replace(hour=departure_time_hours, minute=departure_time_minutes)
+
+    # If train departs earlier or at the same time → move to the next day
+    if departure_time_dt <= arrival_time_dt:
+        departure_time_dt += timedelta(days=1)
+
+    delta = departure_time_dt - arrival_time_dt
+    return delta.total_seconds() / 60.0  # minutes

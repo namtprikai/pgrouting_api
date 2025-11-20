@@ -18,10 +18,11 @@ import globals
 from helper import (
     build_data_infos,
     build_result_segment,
-    linestring_to_geojson_feature,
     extract_linestring,
     add_hours,
-    create_features
+    create_features,
+    find_ship_by_departure_time,
+    calc_wait_minutes
 )
 
 try:
@@ -1370,7 +1371,7 @@ class RouteOptimizer:
                         else round(truck_info["distance"], 2)
                     ),
                     "total_distance_km": 0 if np.isnan(distance_km) else round(distance_km, 2),
-                    "co2_emissions_grams": (
+                    "total_co2_emissions_grams": (
                         0 if np.isnan(co2_emissions) else round(co2_emissions, 2)
                     ),
                     "truck_time_minutes": (
@@ -1513,7 +1514,7 @@ class RouteOptimizer:
                     "total_time_minutes": total_time,
                     "total_distance_meters": total_distance,
                     "total_distance_km": total_distance / 1000,
-                    "co2_emissions_grams": co2_emissions,
+                    "total_co2_emissions_grams": co2_emissions,
                     "origin_port": origin_port["C02_005"],
                     "dest_port": dest_port["C02_005"],
                     "origin_station": "",  # No station for ship route
@@ -1669,7 +1670,7 @@ class RouteOptimizer:
                     "total_time_minutes": total_time,
                     "total_distance_meters": total_distance,
                     "total_distance_km": total_distance / 1000,
-                    "co2_emissions_grams": co2_emissions,
+                    "total_co2_emissions_grams": co2_emissions,
                     "origin_port": "",  # No port for train route
                     "dest_port": "",  # No port for train route
                     "origin_station": origin_station["Station_Name"],
@@ -1817,7 +1818,7 @@ class RouteOptimizer:
                 "total_time_minutes": round(origin_to_station["time"], 2),
                 "total_distance_meters": origin_to_station["distance"],
                 "total_distance_km": round(origin_to_station["distance"] / 1000, 2),
-                "co2_emissions_grams": co2_truck_1,
+                "total_co2_emissions_grams": co2_truck_1,
                 "truck_wait_time_minutes": 90,
                 "geometry": truck_geom_1,
             }
@@ -1832,7 +1833,7 @@ class RouteOptimizer:
                 "total_time_minutes": round(train_info["time"], 2),
                 "total_distance_meters": train_info["distance"] * 1000,
                 "total_distance_km": round(train_info["distance"], 2),
-                "co2_emissions_grams": co2_train,
+                "total_co2_emissions_grams": co2_train,
                 "geometry": train_geom,
             }
 
@@ -1846,7 +1847,7 @@ class RouteOptimizer:
                 "total_time_minutes": round(station_to_dest["time"], 2),
                 "total_distance_meters": station_to_dest["distance"],
                 "total_distance_km": round(station_to_dest["distance"] / 1000, 2),
-                "co2_emissions_grams": co2_truck_2,
+                "total_co2_emissions_grams": co2_truck_2,
                 "truck_wait_time_minutes": 90,
                 "geometry": truck_geom_2,
             }
@@ -2081,7 +2082,7 @@ class RouteOptimizer:
                 "total_time_minutes": total_time,
                 "total_distance_meters": total_distance,
                 "total_distance_km": total_distance / 1000,
-                "co2_emissions_grams": co2_emissions,
+                "total_co2_emissions_grams": co2_emissions,
                 "origin_port": "",
                 "dest_port": "",
                 "origin_station": origin_station["Station_Name"],
@@ -2213,15 +2214,15 @@ class RouteOptimizer:
                 origin_distance_km = 0 if np.isnan(origin_to_port["distance"]) else round(origin_to_port["distance"]/1000, 2)
                 origin_co2_emissions = self._calculate_co2_emissions('truck', weight_tons, origin_distance_km)
                 origin_travel_time = self._calculate_travel_time(input_departure_hour, round(origin_to_port["time"]/60, 2), False)
-                origin_travel_time_wait = self._calculate_travel_time(input_departure_hour, round(origin_to_port["time"]/60, 2), True)
                 
                 globals.GLOBAL_STATE["departure_time"] = origin_travel_time['departure_time']
-                globals.GLOBAL_STATE["arrival_time_route_before"] = add_hours(origin_travel_time['arrival_time'])
+                globals.GLOBAL_STATE["arrival_time_buffer_wait_time"] = add_hours(origin_travel_time['arrival_time'], 1.5)
+                globals.GLOBAL_STATE["arrival_time_previous_route"] = origin_travel_time['arrival_time']
                 
                 origin_to_port_routes = {
                     "departure_time": origin_travel_time['departure_time'],
                     "arrival_time": origin_travel_time['arrival_time'],
-                    "total_wait_time_before_departure": origin_travel_time_wait['arrival_time'],
+                    "total_wait_time_before_departure_minutes": 0,
                     "origin_name": origin_name,
                     "destination_name": origin_port["C02_005"],
                     "total_time_minutes": (
@@ -2233,7 +2234,7 @@ class RouteOptimizer:
                         else round(origin_to_port["distance"], 2)
                     ),
                     "total_distance_km": origin_distance_km,
-                    "co2_emissions_grams": (
+                    "total_co2_emissions_grams": (
                         0 if np.isnan(origin_co2_emissions) else round(origin_co2_emissions, 2)
                     ),
                     "geometry": origin_to_port["geometry"],
@@ -2260,7 +2261,7 @@ class RouteOptimizer:
                         else round(port_to_dest["distance"], 2)
                     ),
                     "total_distance_km": origin_distance_km,
-                    "co2_emissions_grams": (
+                    "total_co2_emissions_grams": (
                         0 if np.isnan(dest_co2_emissions) else round(dest_co2_emissions, 2)
                     ),
                     "geometry": port_to_dest["geometry"],
@@ -2294,6 +2295,8 @@ class RouteOptimizer:
 
             if direct_ship:
                 co2_emissions = self._calculate_co2_emissions('ship', weight_tons, direct_ship["distance"] / 1000)
+                total_wait_time_before_departure_minutes = calc_wait_minutes(globals.GLOBAL_STATE["arrival_time_previous_route"], direct_ship['departure_time'])
+                globals.GLOBAL_STATE["arrival_time_previous_route"] = direct_ship['arrival_time']
                 return [
                     {
                         "type": "direct",
@@ -2304,6 +2307,7 @@ class RouteOptimizer:
                         "arrival_time": direct_ship['arrival_time'],
                         "origin_name": origin_port["C02_005"],
                         "destination_name": dest_port["C02_005"],
+                        "total_wait_time_before_departure_minutes": total_wait_time_before_departure_minutes,
                         "total_time_minutes": (
                             0 if np.isnan(direct_ship['time']) else round(direct_ship['time'] * 60, 2)
                         ),
@@ -2313,7 +2317,7 @@ class RouteOptimizer:
                             else round(direct_ship["distance"], 2)
                         ),
                         "total_distance_km": 0 if np.isnan(direct_ship["distance"]) else round(direct_ship["distance"] / 1000, 2),
-                        "co2_emissions_grams": co2_emissions
+                        "total_co2_emissions_grams": co2_emissions
                     }
                 ]
             else:
@@ -2402,10 +2406,7 @@ class RouteOptimizer:
             routes = []
             for transfer_port in list(transfer_ports)[:max_transfers]:
                 # Find ship routes via transfer
-                leg1 = self._get_ship_route_info(origin_port["C02_005"], transfer_port)
-                if leg1:
-                    globals.GLOBAL_STATE["arrival_time_route_before"] = add_hours(leg1['arrival_time'])
-                
+                leg1 = self._get_ship_route_info(origin_port["C02_005"], transfer_port)                    
                 leg2 = self._get_ship_route_info(transfer_port, dest_port["C02_005"])
 
                 if leg1 and leg2:
@@ -2413,8 +2414,15 @@ class RouteOptimizer:
                     total_time = leg1["time"] + leg2["time"]
                     total_distance = leg1["distance"] + leg2["distance"]
 
-                    leg1_co2_emissions = self._calculate_co2_emissions('ship', weight_tons, leg1["distance"] / 1000)
-                    leg2_co2_emissions = self._calculate_co2_emissions('ship', weight_tons, leg2["distance"] / 1000)
+                    leg1_co2_emissions = self._calculate_co2_emissions('ship', weight_tons, (leg1["distance"] / 1000) * 1.5)
+                    leg2_co2_emissions = self._calculate_co2_emissions('ship', weight_tons, (leg2["distance"] / 1000) * 1.5)
+
+                    leg1_total_wait_time_before_departure_minutes = calc_wait_minutes(globals.GLOBAL_STATE["arrival_time_previous_route"], leg1['departure_time'])
+                    globals.GLOBAL_STATE["arrival_time_previous_route"] = leg1['arrival_time']
+
+                    leg2_total_wait_time_before_departure_minutes = calc_wait_minutes(globals.GLOBAL_STATE["arrival_time_previous_route"], leg2['departure_time'])
+                    globals.GLOBAL_STATE["arrival_time_previous_route"] = leg2['arrival_time']
+
                     routes.append(
                         {
                             "type": "transfer",
@@ -2425,27 +2433,29 @@ class RouteOptimizer:
                             "transfer_ports": [str(transfer_port)],
                             "leg1": {
                                 "vehicle": VEHICLES['ship'],
-                                "departure_time": leg1['departure_time'],
-                                "arrival_time": leg1['arrival_time'],
                                 "origin_name": origin_port["C02_005"],
                                 "destination_name": transfer_port,
+                                "departure_time": leg1['departure_time'],
+                                "arrival_time": leg1['arrival_time'],
+                                "total_wait_time_before_departure_minutes": leg1_total_wait_time_before_departure_minutes,
                                 "total_time_minutes": (
                                     0 if np.isnan(leg1['time']) else round(leg1['time'] * 60, 2)
                                 ),
-                                "total_distance_km": 0 if np.isnan(leg1["distance"]) else round(leg1["distance"] / 1000, 2),
-                                "co2_emissions_grams": leg1_co2_emissions
+                                "total_distance_km": 0 if np.isnan(leg1["distance"]) else round((leg1["distance"] / 1000)*1.5, 2),
+                                "total_co2_emissions_grams": leg1_co2_emissions
                             },
                             "leg2": {
                                 "vehicle": VEHICLES['ship'],
-                                "departure_time": leg2['departure_time'],
-                                "arrival_time": leg2['arrival_time'],
                                 "origin_name": transfer_port,
                                 "destination_name": dest_port["C02_005"],
+                                "departure_time": leg2['departure_time'],
+                                "arrival_time": leg2['arrival_time'],
+                                "total_wait_time_before_departure_minutes": leg2_total_wait_time_before_departure_minutes,
                                 "total_time_minutes": (
                                     0 if np.isnan(leg2['time']) else round(leg2['time'] * 60, 2)
                                 ),
-                                "total_distance_km": 0 if np.isnan(leg2["distance"]) else round(leg2["distance"] / 1000, 2),
-                                "co2_emissions_grams": leg2_co2_emissions
+                                "total_distance_km": 0 if np.isnan(leg2["distance"]) else round((leg2["distance"] / 1000)*1.5, 2),
+                                "total_co2_emissions_grams": leg2_co2_emissions
                             }
                         }
                     )
@@ -2468,7 +2478,6 @@ class RouteOptimizer:
     ) -> Optional[Dict]:
         """Create combined truck + ship route"""
         try:
-            print(ship_route, 'ship_route')
             origin_to_port = truck_routes["origin_to_port"]
             port_to_dest = truck_routes["port_to_dest"]
 
@@ -2523,7 +2532,7 @@ class RouteOptimizer:
                 "vehicle": VEHICLES['truck'],
                 "departure_time": truck_routes['origin_to_port_routes']['departure_time'],
                 "arrival_time": truck_routes['origin_to_port_routes']['arrival_time'],
-                "total_wait_time_before_departure": truck_routes['origin_to_port_routes']['total_wait_time_before_departure'],
+                "total_wait_time_before_departure_minutes": truck_routes['origin_to_port_routes']['total_wait_time_before_departure_minutes'],
                 "origin_name": truck_routes['origin_to_port_routes']['origin_name'],
                 "destination_name": truck_routes['origin_to_port_routes']['destination_name'],
                 "total_time_minutes": (
@@ -2535,78 +2544,94 @@ class RouteOptimizer:
                     else truck_routes['origin_to_port_routes']['total_distance_meters']
                 ),
                 "total_distance_km": 0 if np.isnan(truck_routes['origin_to_port_routes']['total_distance_km']) else truck_routes['origin_to_port_routes']['total_distance_km'],
-                "co2_emissions_grams": (
-                    0 if np.isnan(truck_routes['origin_to_port_routes']['co2_emissions_grams']) else truck_routes['origin_to_port_routes']['co2_emissions_grams']
+                "total_co2_emissions_grams": (
+                    0 if np.isnan(truck_routes['origin_to_port_routes']['total_co2_emissions_grams']) else truck_routes['origin_to_port_routes']['total_co2_emissions_grams']
                 ),
                 "geometry": origin_to_port["geometry"],
             }
             features.append(f1)
+            globals.GLOBAL_STATE['total_time_minutes'] += f1['total_time_minutes'] + f1['total_wait_time_before_departure_minutes']
+            globals.GLOBAL_STATE['total_move_time_minutes'] += f1['total_time_minutes']
+            globals.GLOBAL_STATE['total_distance_km'] += f1['total_distance_km']
+            globals.GLOBAL_STATE['total_co2_emissions_grams'] += f1['total_co2_emissions_grams']
+            
 
             if transfer_ports:
-                f2_delay = self._calculate_travel_time(ship_route['leg1']['departure_time'], round(ship_route['leg1']['total_time_minutes']/60, 2), True)
                 f2 = {
                     "vehicle": VEHICLES['ship'],
                     "departure_time": ship_route['leg1']['departure_time'],
                     "arrival_time": ship_route['leg1']['arrival_time'],
-                    "total_wait_time_before_departure": f2_delay['arrival_time'],
+                    "total_wait_time_before_departure_minutes": ship_route['leg1']['total_wait_time_before_departure_minutes'],
                     "origin_name": ship_route['leg1']['origin_name'],
                     "destination_name": ship_route['leg1']['destination_name'],
                     "total_time_minutes": (
                         0 if np.isnan(ship_route['leg1']['total_time_minutes']) else ship_route['leg1']['total_time_minutes']
                     ),
                     "total_distance_km": 0 if np.isnan(ship_route['leg1']['total_distance_km']) else ship_route['leg1']['total_distance_km'],
-                    "co2_emissions_grams": (
-                        0 if np.isnan(ship_route['leg1']['co2_emissions_grams']) else ship_route['leg1']['co2_emissions_grams']
+                    "total_co2_emissions_grams": (
+                        0 if np.isnan(ship_route['leg1']['total_co2_emissions_grams']) else ship_route['leg1']['total_co2_emissions_grams']
                     ),
                     "geometry": ship_segments[0] if transfer_ports else ship_geometry,
                 }
                 features.append(f2)
+                globals.GLOBAL_STATE['total_time_minutes'] += (f2['total_time_minutes'] + f2['total_wait_time_before_departure_minutes'])
+                globals.GLOBAL_STATE['total_move_time_minutes'] += f2['total_time_minutes']
+                globals.GLOBAL_STATE['total_distance_km'] += f2['total_distance_km']
+                globals.GLOBAL_STATE['total_co2_emissions_grams'] += f2['total_co2_emissions_grams']
 
-                f3_delay = self._calculate_travel_time(ship_route['leg2']['departure_time'], round(ship_route['leg2']['total_time_minutes']/60, 2), True)
                 f3 = {
                     "vehicle": VEHICLES['ship'],
                     "departure_time": ship_route['leg2']['departure_time'],
                     "arrival_time": ship_route['leg2']['arrival_time'],
-                    "total_wait_time_before_departure": f3_delay['arrival_time'],
+                    "total_wait_time_before_departure_minutes": ship_route['leg2']['total_wait_time_before_departure_minutes'],
                     "origin_name": ship_route['leg2']['origin_name'],
                     "destination_name": ship_route['leg2']['destination_name'],
                     "total_time_minutes": (
                         0 if np.isnan(ship_route['leg2']['total_time_minutes']) else ship_route['leg2']['total_time_minutes']
                     ),
                     "total_distance_km": 0 if np.isnan(ship_route['leg2']['total_distance_km']) else ship_route['leg2']['total_distance_km'],
-                    "co2_emissions_grams": (
-                        0 if np.isnan(ship_route['leg2']['co2_emissions_grams']) else ship_route['leg2']['co2_emissions_grams']
+                    "total_co2_emissions_grams": (
+                        0 if np.isnan(ship_route['leg2']['total_co2_emissions_grams']) else ship_route['leg2']['total_co2_emissions_grams']
                     ),
                     "geometry": ship_segments[1],
                 }
                 features.append(f3)
+                globals.GLOBAL_STATE['total_time_minutes'] += (f3['total_time_minutes'] + f3['total_wait_time_before_departure_minutes'])
+                globals.GLOBAL_STATE['total_move_time_minutes'] += f3['total_time_minutes']
+                globals.GLOBAL_STATE['total_distance_km'] += f3['total_distance_km']
+                globals.GLOBAL_STATE['total_co2_emissions_grams'] += f3['total_co2_emissions_grams']
             else:
-                ship_time_wait = self._calculate_travel_time(ship_route['departure_time'], round(ship_route['total_time_minutes']/60, 2), True)
                 f2 = {
                     "vehicle": VEHICLES['ship'],
                     "departure_time": ship_route['departure_time'],
                     "arrival_time": ship_route['arrival_time'],
-                    "total_wait_time_before_departure": ship_time_wait['arrival_time'],
+                    "total_wait_time_before_departure_minutes": ship_route['total_wait_time_before_departure_minutes'],
                     "origin_name": ship_route['origin_name'],
                     "destination_name": ship_route['destination_name'],
                     "total_time_minutes": (
                         0 if np.isnan(ship_route['total_time_minutes']) else ship_route['total_time_minutes']
                     ),
                     "total_distance_km": 0 if np.isnan(ship_route['total_distance_km']) else ship_route['total_distance_km'],
-                    "co2_emissions_grams": (
-                        0 if np.isnan(ship_route['co2_emissions_grams']) else ship_route['co2_emissions_grams']
+                    "total_co2_emissions_grams": (
+                        0 if np.isnan(ship_route['total_co2_emissions_grams']) else ship_route['total_co2_emissions_grams']
                     ),
                     "geometry": ship_segments[0] if transfer_ports else ship_geometry,
                 }
                 features.append(f2)
+                globals.GLOBAL_STATE['total_time_minutes'] += (f2['total_time_minutes'] + f2['total_wait_time_before_departure_minutes'])
+                globals.GLOBAL_STATE['total_move_time_minutes'] += f2['total_time_minutes']
+                globals.GLOBAL_STATE['total_distance_km'] += f2['total_distance_km']
+                globals.GLOBAL_STATE['total_co2_emissions_grams'] += f2['total_co2_emissions_grams']
 
             ship_arrival_time = f3['arrival_time'] if transfer_ports else f2['arrival_time']
-            truck_departure_time = self._calculate_travel_time(ship_arrival_time, truck_routes['port_to_dest_routes']['total_time_minutes'] / 60, False)
-            globals.GLOBAL_STATE["arrival_time"] = truck_departure_time['arrival_time']
+            truck_departure_time = add_hours(ship_arrival_time, 1.5)
+            truck_travel_time = self._calculate_travel_time(truck_departure_time, truck_routes['port_to_dest_routes']['total_time_minutes'] / 60, False)
+            globals.GLOBAL_STATE["arrival_time"] = truck_travel_time['arrival_time']
             f4 = {
                 "vehicle": VEHICLES['truck'],
-                "departure_time": ship_arrival_time,
-                "arrival_time": truck_departure_time['arrival_time'],
+                "departure_time": truck_departure_time,
+                "arrival_time": truck_travel_time['arrival_time'],
+                "total_wait_time_before_departure_minutes": calc_wait_minutes(globals.GLOBAL_STATE['arrival_time_previous_route'], truck_departure_time),
                 "origin_name": truck_routes['port_to_dest_routes']['origin_name'],
                 "destination_name": truck_routes['port_to_dest_routes']['destination_name'],
                 "total_time_minutes": (
@@ -2618,18 +2643,23 @@ class RouteOptimizer:
                     else truck_routes['port_to_dest_routes']['total_distance_meters']
                 ),
                 "total_distance_km": 0 if np.isnan(truck_routes['port_to_dest_routes']['total_distance_km']) else truck_routes['port_to_dest_routes']['total_distance_km'],
-                "co2_emissions_grams": (
-                    0 if np.isnan(truck_routes['port_to_dest_routes']['co2_emissions_grams']) else truck_routes['port_to_dest_routes']['co2_emissions_grams']
+                "total_co2_emissions_grams": (
+                    0 if np.isnan(truck_routes['port_to_dest_routes']['total_co2_emissions_grams']) else truck_routes['port_to_dest_routes']['total_co2_emissions_grams']
                 ),
                 "geometry": port_to_dest.get("geometry"),
             }
             features.append(f4)
+            globals.GLOBAL_STATE['total_time_minutes'] += (f4['total_time_minutes'] + f4['total_wait_time_before_departure_minutes'])
+            globals.GLOBAL_STATE['total_move_time_minutes'] += f4['total_time_minutes']
+            globals.GLOBAL_STATE['total_distance_km'] += f4['total_distance_km']
+            globals.GLOBAL_STATE['total_co2_emissions_grams'] += f4['total_co2_emissions_grams']
+            
             return {
                 "mode": mode,
                 "total_time_minutes": total_time,
                 "total_distance_meters": total_distance,
                 "total_distance_km": total_distance / 1000,
-                "co2_emissions_grams": co2_emissions,
+                "total_co2_emissions_grams": co2_emissions,
                 "origin_port": origin_port["C02_005"],
                 "dest_port": dest_port["C02_005"],
                 "origin_station": "",
@@ -2857,10 +2887,12 @@ class RouteOptimizer:
         ]
 
         if not route.empty:
-            route_time = route["Route_Time"].iloc[0] if route["Route_Time"].iloc[0] else None
-            departure_time = route["Departure_Time"].iloc[0] if route["Departure_Time"].iloc[0] else globals.GLOBAL_STATE["arrival_time_route_before"]
-            arrival_time = route["Arrival_Time"].iloc[0] if route["Arrival_Time"].iloc[0] else None
-            speed_upper = route["Speed_Upper_(km/h)"].iloc[0] if route["Speed_Upper_(km/h)"].iloc[0] else SHIP_SPEED_DEFAULT
+            ship_data = find_ship_by_departure_time(route, globals.GLOBAL_STATE['arrival_time_buffer_wait_time'])
+
+            route_time = ship_data["Route_Time"].iloc[0] if ship_data["Route_Time"].iloc[0] else None
+            departure_time = ship_data["Departure_Time"].iloc[0] if ship_data["Departure_Time"].iloc[0] else globals.GLOBAL_STATE["arrival_time_previous_route"]
+            arrival_time = ship_data["Arrival_Time"].iloc[0] if ship_data["Arrival_Time"].iloc[0] else None
+            speed_upper = ship_data["Speed_Upper_(km/h)"].iloc[0] if ship_data["Speed_Upper_(km/h)"].iloc[0] else SHIP_SPEED_DEFAULT
 
             # Calculate distance between ports
             origin_port_data = self.minato_gdf[
@@ -2876,7 +2908,7 @@ class RouteOptimizer:
                     dest_port_data["X"].iloc[0],
                 )
 
-                if not route_time or not arrival_time or not route["Departure_Time"].iloc[0] or not route["Speed_Upper_(km/h)"].iloc[0]:
+                if not route_time or not arrival_time or not ship_data["Departure_Time"].iloc[0] or not ship_data["Speed_Upper_(km/h)"].iloc[0]:
                     route_time = (distance / 1000) * 1.5 / speed_upper
                     arrival_time = add_hours(departure_time, route_time)
                     globals.GLOBAL_STATE["warning_message"] = MESSAGES['no_time_data']
@@ -2947,7 +2979,7 @@ class RouteOptimizer:
         min_distance_route = min(routes, key=lambda x: x["total_distance_meters"])
 
         # Find minimum CO2 route
-        min_co2_route = min(routes, key=lambda x: x["co2_emissions_grams"])
+        min_co2_route = min(routes, key=lambda x: x["total_co2_emissions_grams"])
 
         # Create copies without geometry for optimal routes (to avoid JSON serialization issues)
         def create_route_summary(route):
@@ -3201,7 +3233,7 @@ class RouteOptimizer:
                     "total_time_minutes": total_time,
                     "total_distance_meters": total_distance,
                     "total_distance_km": total_distance / 1000,
-                    "co2_emissions_grams": co2_emissions,
+                    "total_co2_emissions_grams": co2_emissions,
                     "origin_port": origin_port["C02_005"],
                     "dest_port": dest_port["C02_005"],
                     "transfer_port": transfer_port,
@@ -3376,7 +3408,7 @@ class RouteOptimizer:
                     "total_time_minutes": total_time,
                     "total_distance_meters": total_distance,
                     "total_distance_km": total_distance / 1000,
-                    "co2_emissions_grams": co2_emissions,
+                    "total_co2_emissions_grams": co2_emissions,
                     "origin_station": origin_station["Station_Name"],
                     "dest_station": dest_station["Station_Name"],
                     "transfer_station": transfer_station,
