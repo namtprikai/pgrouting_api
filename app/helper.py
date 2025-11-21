@@ -467,6 +467,13 @@ def calc_wait_minutes(arrival_time: str, departure_time: str) -> float:
     delta = departure_time_dt - arrival_time_dt
     return delta.total_seconds() / 60.0  # minutes
 
+def to_hhmm(t):
+    t = str(t)
+    if " " in t:  # "1900-01-02 11:04:52"
+        return t.split(" ")[1][:5]
+    return t[:5]
+
+
 def process_train_data(
     schedules_data: pd.DataFrame, stations_data: gpd.GeoDataFrame
 ) -> List[RouteDict]:
@@ -524,8 +531,8 @@ def process_train_data(
                 "arrival_name": arr_name,
                 "arrival_lat": arr_station["lat"],
                 "arrival_lon": arr_station["lon"],
-                "departure_time": str(row["Departure_Time"]),  # "HH:MM"
-                "arrival_time": str(row["Arrival_Time"]),  # "HH:MM"
+                "departure_time": to_hhmm(str(row["Departure_Time"])),  # "HH:MM"
+                "arrival_time": to_hhmm(str(row["Arrival_Time"])),  # "HH:MM"
                 "route_time_minutes": route_minutes,
             }
         )
@@ -594,7 +601,7 @@ def process_ship_data(
                 "arrival_lon": arr_station["lon"],
                 "departure_time": dep_time,
                 "arrival_time": arr_time,
-                "route_time_minutes": route_time,
+                "route_time_minutes": round(route_time * 60, 2),
             }
         )
 

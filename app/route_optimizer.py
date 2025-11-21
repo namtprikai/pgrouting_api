@@ -1914,13 +1914,6 @@ class RouteOptimizer:
             truck_1_departure_time = truck_1_travel_times["departure_time"]
             truck_1_arrival_time = truck_1_travel_times["arrival_time"]
 
-            # Calculate train arrival time
-            def to_hhmm(t):
-                t = str(t)
-                if " " in t:  # "1900-01-02 11:04:52"
-                    return t.split(" ")[1][:5]
-                return t[:5]
-
             train_departure_time_raw = train_info["departure_time"]
             train_arrival_time_raw = train_info["arrival_time"]
 
