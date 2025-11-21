@@ -8,6 +8,7 @@ import numpy as np
 from typing import Any, Dict, List
 import pandas as pd
 import geopandas as gpd
+from typing import Any, Optional
 
 RouteDict = Dict[str, Any]
 
@@ -467,6 +468,36 @@ def calc_wait_minutes(arrival_time: str, departure_time: str) -> float:
     delta = departure_time_dt - arrival_time_dt
     return delta.total_seconds() / 60.0  # minutes
 
+def to_nullable_str(v: Any) -> Optional[str]:
+    """Return None if value is NaN/empty, else str(v)."""
+    if pd.isna(v):
+        return None
+    s = str(v)
+    if s.strip() == "":
+        return None
+    return s
+
+
+def to_nullable_float(v: Any) -> Optional[float]:
+    """Return None if value is NaN, else float(v)."""
+    if pd.isna(v):
+        return None
+    try:
+        return float(v)
+    except (TypeError, ValueError):
+        return None
+
+
+def to_hhmm_or_none(v: Any) -> Optional[str]:
+    """Convert datetime-like to 'HH:MM', or None if NaN/invalid."""
+    if pd.isna(v):
+        return None
+    try:
+        return pd.to_datetime(v).strftime("%H:%M")
+    except Exception:
+        return None
+
+
 def to_hhmm(t):
     t = str(t)
     if " " in t:  # "1900-01-02 11:04:52"
@@ -479,61 +510,66 @@ def process_train_data(
 ) -> List[RouteDict]:
     """
     Convert train schedule DataFrame to list[dict] in the unified route format.
-
-    Expected columns in schedule_data:
-        - origin_name
-        - origin_lat
-        - origin_lon
-        - destination_name
-        - destination_lat
-        - destination_lon
-        - departure_time  (str, "HH:MM")
-        - arrival_time    (str, "HH:MM")
-        - total_time_minutes (numeric)
     """
     routes: List[RouteDict] = []
 
-    station_lookup = (
-        stations_data.drop_duplicates(subset="Station_Name", keep="first")
-        .set_index("Station_Name")[["lon", "lat"]]
-        .to_dict(orient="index")
-    )
+    unique_stations = stations_data.drop_duplicates(subset="Station_Name", keep="first")
+
+    station_lookup: Dict[str, Dict[str, float]] = {}
+    for _, srow in unique_stations.iterrows():
+        name = to_nullable_str(srow.get("Station_Name"))
+        if name is None:
+            continue
+        station_lookup[name] = {
+            "lon": to_nullable_float(srow.get("lon")),
+            "lat": to_nullable_float(srow.get("lat")),
+        }
 
     for _, row in schedules_data.iterrows():
-        dep_name = row["Departure_Station_Name"]
-        arr_name = row["Arrival_Station_Name"]
+        dep_name = to_nullable_str(row.get("Departure_Station_Name"))
+        arr_name = to_nullable_str(row.get("Arrival_Station_Name"))
 
-        dep_station = station_lookup.get(dep_name)
-        arr_station = station_lookup.get(arr_name)
+        dep_station = station_lookup.get(dep_name) if dep_name is not None else None
+        arr_station = station_lookup.get(arr_name) if arr_name is not None else None
 
-        # Skip if station not found in lookup
-        if not dep_station or not arr_station:
-            continue
-
-        duration_value = row["train_Duration"]
-
-        if pd.isna(duration_value):
-            # no duration -> skip or set to 0; here we skip
-            continue
-
-        if isinstance(duration_value, pd.Timedelta):
-            # convert Timedelta -> minutes
-            route_minutes = duration_value.total_seconds() / 60.0
+        if dep_station is not None:
+            dep_lat = to_nullable_float(dep_station.get("lat"))
+            dep_lon = to_nullable_float(dep_station.get("lon"))
         else:
-            # already numeric/string -> cast to float
-            route_minutes = float(duration_value)
+            dep_lat = None
+            dep_lon = None
+
+        if arr_station is not None:
+            arr_lat = to_nullable_float(arr_station.get("lat"))
+            arr_lon = to_nullable_float(arr_station.get("lon"))
+        else:
+            arr_lat = None
+            arr_lon = None
+
+        duration_value = row.get("train_Duration")
+        route_minutes = None
+
+        if not pd.isna(duration_value):
+            if isinstance(duration_value, pd.Timedelta):
+                route_minutes = duration_value.total_seconds() / 60.0
+            else:
+                route_minutes = to_nullable_float(duration_value)
 
         routes.append(
             {
                 "depature_name": dep_name,
-                "depature_lat": dep_station["lat"],
-                "depature_lon": dep_station["lon"],
+                "depature_lat": dep_lat,
+                "depature_lon": dep_lon,
                 "arrival_name": arr_name,
-                "arrival_lat": arr_station["lat"],
-                "arrival_lon": arr_station["lon"],
-                "departure_time": to_hhmm(str(row["Departure_Time"])),  # "HH:MM"
-                "arrival_time": to_hhmm(str(row["Arrival_Time"])),  # "HH:MM"
-                "route_time_minutes": route_minutes,
+                "arrival_lat": arr_lat,
+                "arrival_lon": arr_lon,
+                "departure_time": to_hhmm_or_none(
+                    row.get("Departure_Time")
+                ),  # "HH:MM" or None
+                "arrival_time": to_hhmm_or_none(
+                    row.get("Arrival_Time")
+                ),  # "HH:MM" or None
+                "route_time_minutes": route_minutes,  # float or None
             }
         )
 
