@@ -126,7 +126,7 @@ class RouteOptimizer:
 
     def _load_station_data(self):
         """Load freight station data"""
-        station = pd.read_csv(f"{self.data_folder_path}/貨物駅_位置情報.csv")
+        station = pd.read_excel(f"{self.data_folder_path}/貨物駅_位置情報.xlsx")
         self.station_gdf = gpd.GeoDataFrame(
             station, geometry=gpd.points_from_xy(station["lon"], station["lat"])
         )
@@ -157,7 +157,7 @@ class RouteOptimizer:
 
     def _load_train_schedule(self):
         """Load train schedule"""
-        self.train_time = pd.read_csv(f"{self.data_folder_path}/貨物駅_時刻表.csv")
+        self.train_time = pd.read_excel(f"{self.data_folder_path}/貨物駅_時刻表.xlsx")
 
         # Replace arrival date
         self.train_time["Arrival_Date_Before"] = self.train_time["Arrival_Date"]
