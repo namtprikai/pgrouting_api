@@ -22,7 +22,7 @@ from helper import (
     add_hours,
     create_features,
     find_ship_by_departure_time,
-    calc_wait_minutes
+    calc_wait_minutes, to_hhmm
 )
 
 try:

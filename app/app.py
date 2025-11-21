@@ -165,7 +165,7 @@ def get_route_map():
 @app.post("/api/search-route")
 def multimodal_route(payload: MultimodalBody):
 
-    if (payload.mode.upper() in STREET_TYPE):
+    if (payload.mode[0].upper() in STREET_TYPE):
         # 基本パラメータ
         origin_name = payload.origin_name if payload.origin_name is not None else None
         origin_lat = float(payload.origin_lat) if payload.origin_lat is not None else None

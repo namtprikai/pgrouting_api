@@ -53,14 +53,11 @@ def extract_linestring(geom):
     if isinstance(geom, MultiLineString):
         try:
             merged = linemerge(geom)
-            # linemerge có thể trả về LineString hoặc MultiLineString
             if isinstance(merged, LineString):
                 return merged
             if isinstance(merged, MultiLineString) and len(merged.geoms) > 0:
-                # lấy segment đầu
                 return LineString(list(merged.geoms[0].coords))
         except Exception:
-            # fallback lấy segment đầu
             if len(geom.geoms) > 0:
                 return LineString(list(geom.geoms[0].coords))
             return LineString()
@@ -71,25 +68,19 @@ def extract_linestring(geom):
         gtype = geom.get("type")
         coords = geom.get("coordinates")
         if gtype == "LineString":
-            pass  # coords đã là [[x,y], ...]
+            pass  
         elif gtype == "MultiLineString":
-            # Nếu chỉ có 1 segment -> flatten
             coords = _flatten_if_singleton_segments(coords)
         else:
-            # Không phải line -> rỗng
             return LineString()
 
-    # 3) List/tuple toạ độ thô
     if coords is None and isinstance(geom, (list, tuple)):
         coords = geom
 
-    # 4) Sửa lồng thừa nếu có (ví dụ [[[x,y],[x,y]]])
     coords = _flatten_if_singleton_segments(coords)
 
-    # 5) Ép thành danh sách điểm hợp lệ
     pts = _clean_points(coords if coords is not None else [])
 
-    # 6) Cần ≥ 2 điểm
     if len(pts) >= 2:
         return LineString(pts)
     return LineString()
@@ -105,7 +96,6 @@ def _nz(x):
 
 
 def _get_name(x):
-    """Lấy tên station an toàn: dict['name'] | string | repr."""
     if isinstance(x, dict):
         return x.get("name") or x.get("C02_005") or next(iter(x.values()), None)
     if isinstance(x, (str, int, float)):
@@ -114,11 +104,6 @@ def _get_name(x):
 
 
 def _label_stations(prefix, stations):
-    """
-    stations: list/tuple các object station (dict có 'name', hoặc string).
-    Trả về dict: {origin_station: "..."} nếu 1 station,
-                {origin_station_1: "...", origin_station_2: "...", ...} nếu >=2
-    """
     stations = [s for s in (stations or []) if s is not None]
     if not stations:
         return {}
@@ -131,17 +116,15 @@ def build_data_infos(
     origin_port,
     dest_port,
     origin_stations,
-    dest_stations,  # list hoặc 1 phần tử
-    emissions,  # list các thành phần emission
+    dest_stations,  
+    emissions,  
     ship_time=0,
     train_time_minutes=0,
     truck_time_minutes=0,
-    truck_distances_km=None,  # list các đoạn truck km
+    truck_distances_km=None,
 ):
-    # Cộng CO2 an toàn (NaN/None -> 0)
     co2_emissions = math.fsum(_nz(v) for v in (emissions or []))
 
-    # Tổng truck distance km an toàn
     truck_distance_km = math.fsum(_nz(d) for d in (truck_distances_km or []))
 
     data = {
@@ -161,7 +144,6 @@ def build_data_infos(
         "truck_time_minutes": truck_time_minutes,
         "truck_distance_km": truck_distance_km,
     }
-    # Thêm key station động
     data.update(
         _label_stations(
             "origin",
@@ -193,14 +175,12 @@ def build_result_segment(
     data_infos: dict,
     mode: str,
 ):
-    # km từ meters (an toàn, không crash nếu None)
     total_distance_km = (
         float(total_distance_meters) / 1000.0
         if isinstance(total_distance_meters, (int, float))
         else None
     )
 
-    # Lấy các key cố định từ data_infos (dùng .get để tránh KeyError)
     fixed_fields = {
         "total_co2_emissions_grams": data_infos.get("co2_emissions"),
         "origin_port": data_infos.get("origin_port"),
@@ -211,27 +191,24 @@ def build_result_segment(
         "truck_distance_km": data_infos.get("truck_distance_km"),
     }
 
-    # Gom động tất cả các key trạm (nếu chỉ có 1 sẽ là origin_station/dest_station;
-    # nếu nhiều sẽ là origin_station_1, origin_station_2, ...)
     station_fields = {
         k: v
         for k, v in data_infos.items()
         if k.startswith("origin_station") or k.startswith("dest_station")
     }
 
-    # Kết quả cuối: giữ nguyên logic bạn đang có
     return {
         "mode": mode,
         "segment_index": idx,
         "total_segments": merged_count,
         "is_continuous": (merged_count == 1),
-        "total_time_minutes": "",  # bạn đang để trống
+        "total_time_minutes": "",  
         "total_distance_meters": total_distance_meters,
         "total_distance_km": total_distance_km,
         "transfer_station": "",
         "geometry": geometry,
         **fixed_fields,
-        **station_fields,  # trộn động các trạm
+        **station_fields,  
     }
 
 
@@ -241,7 +218,6 @@ def linestring_to_geojson_feature(geom, props=None, precision=6):
     assert geom.geom_type == "LineString"
     m = mapping(geom)  # {'type': 'LineString', 'coordinates': [(lon,lat), ...]}
 
-    # làm tròn toạ độ để log gọn hơn
     coords = [[round(x, precision), round(y, precision)] for x, y in m["coordinates"]]
 
     feature = {
@@ -252,7 +228,6 @@ def linestring_to_geojson_feature(geom, props=None, precision=6):
             "coordinates": coords,
         },
     }
-    # In 1 dòng gọn gàng để copy-log
     print("---------------------------------------------------------", "\n")
     print(json.dumps(feature, ensure_ascii=False))
     print("---------------------------------------------------------", "\n")
@@ -396,11 +371,11 @@ def convert_numpy_types(obj):
         return obj
 
 def create_response(origin_name, origin_lat, origin_lon, destination_name, destination_lat, destination_lon, result):
-    final_result = []
+    final_results = []
     if isinstance(result, dict):
-        final_result.append(result)
+        final_results.append(result)
     else:
-        final_result = result
+        final_results = result
 
     summary = {
         'origin_name': origin_name,
@@ -411,7 +386,7 @@ def create_response(origin_name, origin_lat, origin_lon, destination_name, desti
         'destination_lat': destination_lat,
         'destination_lon': destination_lon,
         
-        'result': final_result
+        'results': final_results
     }
     return summary
 
@@ -596,8 +571,6 @@ def process_ship_data(
     """
     routes = []
 
-    # Tạo lookup port: dùng cột C02_005 (tên port) hoặc X/Y cho lat/lon
-    # Giả sử bạn muốn dùng C02_005 làm code port
     station_lookup = {}
     for _, row in ports_data.iterrows():
         port_name = row["C02_005"]  # port code/tên
@@ -616,11 +589,9 @@ def process_ship_data(
         dep_station = station_lookup.get(dep_code)
         arr_station = station_lookup.get(arr_code)
 
-        # Skip nếu port không có trong ports_data
         if not dep_station or not arr_station:
             continue
 
-        # Thời gian, route_time
         dep_time = str(row["Departure_Time"])
         arr_time = str(row["Arrival_Time"])
         route_time = (
