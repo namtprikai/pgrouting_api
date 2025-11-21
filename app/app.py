@@ -13,6 +13,8 @@ from route_optimizer import RouteOptimizer
 from helper import process_ship_data, process_train_data
 from constant import *
 import globals
+from helper import create_response
+
 
 
 # =========================
@@ -101,7 +103,7 @@ def sql_all(query: str, params: Tuple[Any, ...]) -> Optional[Dict[str, Any]]:
 # 入出力スキーマ
 # =========================
 class MultimodalBody(BaseModel):
-    mode: str = STREET_TYPE["TRUCK_ONLY"]
+    mode: list
     origin_name: str
     origin_lat: confloat(ge=-90, le=90)
     origin_lon: confloat(ge=-180, le=180)
@@ -113,7 +115,8 @@ class MultimodalBody(BaseModel):
     find_station_radius_km: int
     find_port_radius_km: int
     departure_hour: int
-    weight_tons: int = 1
+    weight_tons: float
+
 
 
 # =========================
@@ -166,48 +169,30 @@ def get_route_map():
     return combined_data
 
 
-@app.post("/multimodal/route")
+@app.post("/api/search-route")
 def multimodal_route(payload: MultimodalBody):
 
-    if payload.mode.upper() in STREET_TYPE:
+    if (payload.mode[0].upper() in STREET_TYPE):
         # 基本パラメータ
         origin_name = payload.origin_name if payload.origin_name is not None else None
-        origin_lat = (
-            float(payload.origin_lat) if payload.origin_lat is not None else None
-        )
-        origin_lon = (
-            float(payload.origin_lon) if payload.origin_lon is not None else None
-        )
-        destination_name = (
-            payload.destination_name if payload.destination_name is not None else None
-        )
-        destination_lat = (
-            float(payload.destination_lat)
-            if payload.destination_lat is not None
-            else None
-        )
-        destination_lon = (
-            float(payload.destination_lon)
-            if payload.destination_lon is not None
-            else None
-        )
-        mode = (
-            payload.mode.lower()
-            if payload.mode is not None
-            else STREET_TYPE["TRUCK_ONLY"].lower()
-        )
+        origin_lat = float(payload.origin_lat) if payload.origin_lat is not None else None
+        origin_lon = float(payload.origin_lon) if payload.origin_lon is not None else None
+        destination_name = payload.destination_name if payload.destination_name is not None else None
+        destination_lat = float(payload.destination_lat) if payload.destination_lat is not None else None
+        destination_lon = float(payload.destination_lon) if payload.destination_lon is not None else None
+        mode = payload.mode[0].lower() if payload.mode is not None else STREET_TYPE["TRUCK_ONLY"].lower()
         weight_tons = payload.weight_tons if payload.weight_tons is not None else 1
         max_transfers = (
             payload.max_transfers if payload.max_transfers is not None else 1
         )
         show_all = payload.show_all if payload.show_all is not None else True
 
-        if (
-            payload.departure_hour < 0
-            or payload.departure_hour > 23
-            or not isinstance(payload.departure_hour, int)
-        ):
-            return {"mode": payload.mode, "msg": "Error format: departure_hour"}
+        if (payload.departure_hour < 0 or payload.departure_hour > 23 or not isinstance(payload.departure_hour, int)):
+            results = {
+                'mode': mode.upper(),
+                'message': 'Error format: departure_hour'
+            }
+            summary = create_response(origin_name, origin_lat, origin_lon, destination_name, destination_lat, destination_lon, results)
 
         departure_hour = (
             payload.departure_hour if payload.departure_hour is not None else 0
@@ -240,8 +225,12 @@ def multimodal_route(payload: MultimodalBody):
             show_all=show_all,
         )
 
-        if "isError" in results and results.get("isError"):
-            summary = {"mode": payload.mode, "msg": results.get("message")}
+        if 'isError' in results and results.get('isError'):
+            results = {
+                'mode': mode.upper(),
+                'message': results.get('message')
+            }
+            summary = create_response(origin_name, origin_lat, origin_lon, destination_name, destination_lat, destination_lon, results)
         else:
             # Save to file
             file_name = mode + ".geojson"
@@ -289,54 +278,38 @@ def multimodal_route(payload: MultimodalBody):
                 else:
                     # Fallback to all routes if optimal route not found
                     save_results = results
-
-            optimizer.save_results(save_results, "output/" + file_name)
-
+            
+            optimizer.save_results(save_results,  file_name)
+            
             geojson = optimizer._convert_to_geojson(save_results)
             if not show_all:
                 print(f"Saved optimal route by criteria: {criteria}")
 
-            data = results["optimal_routes"][criteria]
+            # data = results['optimal_routes'][criteria]
             departure_time = globals.GLOBAL_STATE["departure_time"]
             arrival_time = globals.GLOBAL_STATE["arrival_time"]
 
-            summary = {
-                "origin_name": origin_name,
-                "origin_lat": origin_lat,
-                "origin_lon": origin_lon,
-                "destination_name": destination_name,
-                "destination_lat": destination_lat,
-                "destination_lon": destination_lon,
-                "result": [
-                    {
-                        "mode": mode.upper(),
-                        "departure_time": departure_time,
-                        "arrival_time": arrival_time,
-                        "total_time_minutes": (
-                            data["total_time_minutes"]
-                            if "total_time_minutes" in data
-                            and data["total_time_minutes"]
-                            else None
-                        ),
-                        "total_distance_meters": (
-                            data["total_distance_meters"]
-                            if "total_distance_meters" in data
-                            and data["total_distance_meters"]
-                            else None
-                        ),
-                        "total_co2_emissions_grams": (
-                            data["co2_emissions_grams"]
-                            if "co2_emissions_grams" in data
-                            and data["co2_emissions_grams"]
-                            else None
-                        ),
-                        "message": globals.GLOBAL_STATE["warning_message"],
-                        "geojson": geojson,
-                    }
-                ],
-            }
+            results = [
+                {
+                    'mode': mode.upper(),
+                    'departure_time': departure_time,
+                    'arrival_time': arrival_time,
+                    'total_time_minutes': round(globals.GLOBAL_STATE['total_time_minutes'], 2),
+                    'total_move_time_minutes': round(globals.GLOBAL_STATE['total_move_time_minutes'], 2),
+                    'total_distance_km': round(globals.GLOBAL_STATE['total_distance_km'], 2),
+                    'total_co2_emissions_grams': round(globals.GLOBAL_STATE['total_co2_emissions_grams'], 2),
+                    'message': globals.GLOBAL_STATE['warning_message'],
+                    'geojson': geojson
+                }
+            ]
+
+            summary = create_response(origin_name, origin_lat, origin_lon, destination_name, destination_lat, destination_lon, results)
     else:
-        summary = {"mode": payload.mode, "msg": "Street cann't found"}
+        results = {
+            'mode': mode.upper(),
+            'message': 'Street cann\'t found'
+        }
+        summary = create_response(origin_name, origin_lat, origin_lon, destination_name, destination_lat, destination_lon, results)
     return summary
 
 

@@ -201,7 +201,7 @@ def build_result_segment(
 
     # Lấy các key cố định từ data_infos (dùng .get để tránh KeyError)
     fixed_fields = {
-        "co2_emissions_grams": data_infos.get("co2_emissions"),
+        "total_co2_emissions_grams": data_infos.get("co2_emissions"),
         "origin_port": data_infos.get("origin_port"),
         "dest_port": data_infos.get("dest_port"),
         "ship_time_hours": data_infos.get("ship_time"),
@@ -313,15 +313,26 @@ def create_features(route):
                 "properties": convert_numpy_types(
                     {
                         "vehicle": route.get("vehicle", ""),
-                        "departure_time": route.get("departure_time", "00:00"),
-                        "arrival_time": route.get("arrival_time", "00:00"),
-                        "total_time_minutes": route.get("total_time_minutes", 0),
-                        "total_distance_km": route.get("total_distance_km", 0),
-                        "total_co2_emissions_grams": route.get(
-                            "co2_emissions_grams", 0
-                        ),
                         "origin_name": route.get("origin_name", ""),
-                        "destination_name": route.get("destination_name", ""),
+                        "destination_name": route.get(
+                            "destination_name", ""
+                        ),
+                        "departure_time": route.get(
+                            "departure_time", "00:00"
+                        ),
+                        "arrival_time": route.get("arrival_time", "00:00"),
+                        "total_wait_time_before_departure_minutes": route.get(
+                            "total_wait_time_before_departure_minutes", 0
+                        ),
+                        "total_time_minutes": route.get(
+                            "total_time_minutes", 0
+                        ),
+                        "total_distance_km": route.get(
+                            "total_distance_km", 0
+                        ),
+                        "total_co2_emissions_grams": (route.get(
+                            "total_co2_emissions_grams", 0
+                        )),
                     }
                 ),
             }
@@ -336,15 +347,26 @@ def create_features(route):
                 "properties": convert_numpy_types(
                     {
                         "vehicle": route.get("vehicle", ""),
-                        "departure_time": route.get("departure_time", "00:00"),
-                        "arrival_time": route.get("arrival_time", "00:00"),
-                        "total_time_minutes": route.get("total_time_minutes", 0),
-                        "total_distance_km": route.get("total_distance_km", 0),
-                        "total_co2_emissions_grams": route.get(
-                            "co2_emissions_grams", 0
-                        ),
                         "origin_name": route.get("origin_name", ""),
-                        "destination_name": route.get("destination_name", ""),
+                        "destination_name": route.get(
+                            "destination_name", ""
+                        ),
+                        "departure_time": route.get(
+                            "departure_time", "00:00"
+                        ),
+                        "arrival_time": route.get("arrival_time", "00:00"),
+                        "total_wait_time_before_departure_minutes": route.get(
+                            "total_wait_time_before_departure_minutes", 0
+                        ),
+                        "total_time_minutes": route.get(
+                            "total_time_minutes", 0
+                        ),
+                        "total_distance_km": route.get(
+                            "total_distance_km", 0
+                        ),
+                        "total_co2_emissions_grams": (route.get(
+                            "total_co2_emissions_grams", 0
+                        )),
                     }
                 ),
             }
