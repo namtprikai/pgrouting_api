@@ -207,14 +207,30 @@ class RouteOptimizer:
         # Loại bỏ khoảng trắng
         self.train_time["Arrival_Time"] = self.train_time["Arrival_Time"].astype(str).str.strip()
         self.train_time["Arrival_Time"].replace("", pd.NaT, inplace=True)
+
+        # Cắt lấy phần HH:MM:SS nếu có cả ngày + giờ
+        arrival_time_str = self.train_time["Arrival_Time"].astype(str).str.extract(
+            r'(\d{2}:\d{2}:\d{2})'
+        )[0]
+
         self.train_time["Parse_Arrival_Time"] = pd.to_datetime(
-            self.train_time["Arrival_Time"].astype(str), format="%H:%M:%S"
+            arrival_time_str,
+            format="%H:%M:%S",
+            errors="coerce"   # cái nào không match regex sẽ thành NaT
         )
 
         self.train_time["Departure_Time"] = self.train_time["Departure_Time"].astype(str).str.strip()
         self.train_time["Departure_Time"].replace("", pd.NaT, inplace=True)
+
+        # Cắt lấy phần HH:MM:SS nếu có cả ngày + giờ
+        departure_time_str = self.train_time["Departure_Time"].astype(str).str.extract(
+            r'(\d{2}:\d{2}:\d{2})'
+        )[0]
+
         self.train_time["Parse_Departure_Time"] = pd.to_datetime(
-            self.train_time["Departure_Time"].astype(str), format="%H:%M:%S"
+            departure_time_str,
+            format="%H:%M:%S",
+            errors="coerce"   # cái nào không match regex sẽ thành NaT
         )
 
         # Add days to arrival time based on Arrival_Date
@@ -532,12 +548,39 @@ class RouteOptimizer:
                 )
             )
 
-            if truck_route_1:
-                routes.append(truck_route_1)
-            if train_route:
-                routes.append(train_route)
-            if truck_route_2:
-                routes.append(truck_route_2)
+            origin_station_name = nearest_stations["origin_station"]["Station_Name"]
+            dest_station_name = nearest_stations["dest_station"]["Station_Name"]
+
+            segments = [
+                (
+                    truck_route_1,
+                    MESSAGES["truck_route_not_found"].format(
+                        origin=origin_name, destination=origin_station_name
+                    ),
+                ),
+                (
+                    train_route,
+                    MESSAGES["train_route_not_found"].format(
+                        origin=origin_station_name, destination=dest_station_name
+                    ),
+                ),
+                (
+                    truck_route_2,
+                    MESSAGES["truck_route_not_found"].format(
+                        origin=dest_station_name, destination=destination_name
+                    ),
+                ),
+            ]
+
+            for segment, error_msg in segments:
+                if segment:
+                    routes.append(segment)
+                else:
+                    return {
+                        "isError": True,
+                        "data": [],
+                        "message": error_msg,
+                    }
 
         # Route 4: Truck + Ship + Train
         if mode == "truck_ship_train":
