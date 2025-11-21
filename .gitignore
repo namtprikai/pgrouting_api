@@ -12,3 +12,4 @@ importer_data/chubu-highways.osm.bz2
 profile.out
 config/*
 data_file/*
+venv/

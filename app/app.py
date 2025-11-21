@@ -10,10 +10,11 @@ from pydantic_settings import BaseSettings
 from shapely import LineString
 import geopandas as gpd
 from route_optimizer import RouteOptimizer
-
+from helper import process_ship_data, process_train_data
 from constant import *
 import globals
 from helper import create_response
+
 
 
 # =========================
@@ -27,7 +28,7 @@ class Settings(BaseSettings):
     # PGPASSWORD: str = os.getenv("PGPASSWORD")
 
     PGHOST: str = "localhost"
-    PGPORT: int = 5434
+    PGPORT: int = 5432
     PGDATABASE: str = "pgrouting"
     PGUSER: str = "postgres"
     PGPASSWORD: str = "pgrouting"
@@ -117,15 +118,56 @@ class MultimodalBody(BaseModel):
     weight_tons: float
 
 
+
 # =========================
 # FastAPI
 # =========================
 app = FastAPI(title="Multimodal Truck/Train/Ship Router (FastAPI)")
 
 
-@app.get("/health")
-def health():
-    return {"ok": True}
+@app.get("/api/routes-map")
+def get_route_map():
+    data_folder_path = FOLDER_DATA
+    db_config = {
+            "host": settings.PGHOST,
+            "port": settings.PGPORT,
+            "database": settings.PGDATABASE,
+            "user": settings.PGUSER,
+            "password": settings.PGPASSWORD,
+        }
+    route_optimizer = RouteOptimizer(data_folder_path, db_config)
+    # Load data
+    optimizer._load_ferry_schedule()
+    optimizer._load_station_data()
+    optimizer._load_train_schedule()
+
+    # Process Ship data
+    ship_data = process_ship_data(
+        stations_data=route_optimizer.minato_gdf,  # GeoDataFrame các port
+        schedules_data=route_optimizer.ferry_time  # DataFrame lịch tàu
+    )
+
+
+    # Process Train data
+    # train_stations = route_optimizer.station_gdf
+    # train_schedules = route_optimizer.train_time
+    # ship_schedule = route_optimizer.ferry_time
+    # ship_data = process_ship_data(ship_schedule)
+
+    # Process Train data
+    train_stations = optimizer.station_gdf
+    train_schedules = optimizer.train_time
+
+    # train_data = process_train_data(
+    #     stations_data=train_stations, schedules_data=train_schedules
+    # )
+
+    # Combine data
+    # combined_data = {"ship_routes": ship_data, "train_routes": train_data}
+    combined_data = {"train_routes": train_data}
+
+    return combined_data
+
 
 @app.post("/api/search-route")
 def multimodal_route(payload: MultimodalBody):
@@ -140,7 +182,9 @@ def multimodal_route(payload: MultimodalBody):
         destination_lon = float(payload.destination_lon) if payload.destination_lon is not None else None
         mode = payload.mode[0].lower() if payload.mode is not None else STREET_TYPE["TRUCK_ONLY"].lower()
         weight_tons = payload.weight_tons if payload.weight_tons is not None else 1
-        max_transfers = payload.max_transfers if payload.max_transfers is not None else 1
+        max_transfers = (
+            payload.max_transfers if payload.max_transfers is not None else 1
+        )
         show_all = payload.show_all if payload.show_all is not None else True
 
         if (payload.departure_hour < 0 or payload.departure_hour > 23 or not isinstance(payload.departure_hour, int)):
@@ -174,7 +218,8 @@ def multimodal_route(payload: MultimodalBody):
             origin_name,
             destination_name,
             departure_hour,
-            weight_tons,mode,
+            weight_tons,
+            mode,
             enable_transfer=True,  # Automatically enabled
             max_transfers=max_transfers,
             show_all=show_all,
@@ -188,43 +233,47 @@ def multimodal_route(payload: MultimodalBody):
             summary = create_response(origin_name, origin_lat, origin_lon, destination_name, destination_lat, destination_lon, results)
         else:
             # Save to file
-            file_name = mode + '.geojson'
-            
+            file_name = mode + ".geojson"
+
             # Determine what to save based on criteria
             if show_all:
                 # Save all routes
                 save_results = results
             else:
                 # Save only optimal route for the specified criteria
-                optimal_routes = results.get('optimal_routes', {})
+                optimal_routes = results.get("optimal_routes", {})
                 if criteria in optimal_routes:
                     # Find the full route with geometry from the original routes list
                     optimal_route_summary = optimal_routes[criteria]
-                    all_routes = results.get('routes', [])
-                    
+                    all_routes = results.get("routes", [])
+
                     # Find the corresponding full route by matching name and mode
                     optimal_route_full = None
                     for route in all_routes:
-                        if (route.get('name') == optimal_route_summary.get('name') and 
-                            route.get('mode') == optimal_route_summary.get('mode')):
+                        if route.get("name") == optimal_route_summary.get(
+                            "name"
+                        ) and route.get("mode") == optimal_route_summary.get("mode"):
                             optimal_route_full = route
                             break
-                    
-                    
+
                     # Use full route if found, otherwise use summary
-                    selected_route = optimal_route_full if optimal_route_full else optimal_route_summary
-                    
+                    selected_route = (
+                        optimal_route_full
+                        if optimal_route_full
+                        else optimal_route_summary
+                    )
+
                     save_results = {
-                        'origin': results.get('origin', {}),
-                        'destination': results.get('destination', {}),
-                        'weight_tons': results.get('weight_tons', 10.0),
-                        'routes': [selected_route],
-                        'optimal_routes': {criteria: optimal_route_summary},
-                        'criteria_used': criteria,
-                        'show_all': show_all,
-                        'mode': mode,
-                        'enable_transfer': True,  # Automatically enabled
-                        'max_transfers': max_transfers
+                        "origin": results.get("origin", {}),
+                        "destination": results.get("destination", {}),
+                        "weight_tons": results.get("weight_tons", 10.0),
+                        "routes": [selected_route],
+                        "optimal_routes": {criteria: optimal_route_summary},
+                        "criteria_used": criteria,
+                        "show_all": show_all,
+                        "mode": mode,
+                        "enable_transfer": True,  # Automatically enabled
+                        "max_transfers": max_transfers,
                     }
                 else:
                     # Fallback to all routes if optimal route not found

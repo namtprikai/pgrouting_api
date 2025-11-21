@@ -5,7 +5,11 @@ import json
 from datetime import datetime, timedelta
 from shapely import wkt
 import numpy as np
+from typing import Any, Dict, List
 import pandas as pd
+import geopandas as gpd
+
+RouteDict = Dict[str, Any]
 
 
 def _is_num(x):
@@ -186,7 +190,7 @@ def build_result_segment(
     geometry,
     total_distance_meters: float,
     data_infos: dict,
-    mode: str
+    mode: str,
 ):
     # km từ meters (an toàn, không crash nếu None)
     total_distance_km = (
@@ -253,11 +257,13 @@ def linestring_to_geojson_feature(geom, props=None, precision=6):
     print("---------------------------------------------------------", "\n")
     return feature
 
+
 def add_hours(time_str: str, hours: float = 3.0) -> str:
     # Parse "HH:MM"
     base_time = datetime.strptime(time_str, "%H:%M")
     new_time = base_time + timedelta(hours=hours)
     return new_time.strftime("%H:%M")
+
 
 def create_features(route):
     try:
@@ -295,9 +301,7 @@ def create_features(route):
             try:
                 geometry = wkt.loads(str(geometry))
             except:
-                print(
-                    f"Warning: Could not convert geometry: {type(geometry)}"
-                )
+                print(f"Warning: Could not convert geometry: {type(geometry)}")
                 return None
 
         # Create feature
@@ -366,13 +370,14 @@ def create_features(route):
                     }
                 ),
             }
-        
+
         return new_feature
 
     except Exception as e:
         print(
             f"Warning: Could not convert geometry for route {route.get('name', '')}: {e}"
         )
+
 
 def convert_numpy_types(obj):
     """Convert numpy types to Python native types"""
@@ -389,75 +394,131 @@ def convert_numpy_types(obj):
     else:
         return obj
 
-def create_response(origin_name, origin_lat, origin_lon, destination_name, destination_lat, destination_lon, result):
-    final_result = []
-    if isinstance(result, dict):
-        final_result.append(result)
-    else:
-        final_result = result
 
-    summary = {
-        'origin_name': origin_name,
-        'origin_lat': origin_lat,
-        'origin_lon': origin_lon,
-        
-        'destination_name': destination_name,
-        'destination_lat': destination_lat,
-        'destination_lon': destination_lon,
-        
-        'result': final_result
+def process_train_data(
+    schedules_data: pd.DataFrame, stations_data: gpd.GeoDataFrame
+) -> List[RouteDict]:
+    """
+    Convert train schedule DataFrame to list[dict] in the unified route format.
+
+    Expected columns in schedule_data:
+        - origin_name
+        - origin_lat
+        - origin_lon
+        - destination_name
+        - destination_lat
+        - destination_lon
+        - departure_time  (str, "HH:MM")
+        - arrival_time    (str, "HH:MM")
+        - total_time_minutes (numeric)
+    """
+    routes: List[RouteDict] = []
+
+    station_lookup = (
+        stations_data.drop_duplicates(subset="Station_Name", keep="first")
+        .set_index("Station_Name")[["lon", "lat"]]
+        .to_dict(orient="index")
+    )
+
+    for _, row in schedules_data.iterrows():
+        dep_name = row["Departure_Station_Name"]
+        arr_name = row["Arrival_Station_Name"]
+
+        dep_station = station_lookup.get(dep_name)
+        arr_station = station_lookup.get(arr_name)
+
+        # Skip if station not found in lookup
+        if not dep_station or not arr_station:
+            continue
+
+        duration_value = row["train_Duration"]
+
+        if pd.isna(duration_value):
+            # no duration -> skip or set to 0; here we skip
+            continue
+
+        if isinstance(duration_value, pd.Timedelta):
+            # convert Timedelta -> minutes
+            route_minutes = duration_value.total_seconds() / 60.0
+        else:
+            # already numeric/string -> cast to float
+            route_minutes = float(duration_value)
+
+        routes.append(
+            {
+                "depature_name": dep_name,
+                "depature_lat": dep_station["lat"],
+                "depature_lon": dep_station["lon"],
+                "arrival_name": arr_name,
+                "arrival_lat": arr_station["lat"],
+                "arrival_lon": arr_station["lon"],
+                "departure_time": str(row["Departure_Time"]),  # "HH:MM"
+                "arrival_time": str(row["Arrival_Time"]),  # "HH:MM"
+                "route_time_minutes": route_minutes,
+            }
+        )
+
+    return routes
+
+
+def process_ship_data(
+    stations_data: gpd.GeoDataFrame,
+    schedules_data: pd.DataFrame,
+) -> list[dict]:
+    """
+    Convert ship schedule data into list of dicts in the format:
+    {
+        "depature_name": string,
+        "depature_lat": float,
+        "depature_lon": float,
+        "arrival_name": string,
+        "arrival_lat": float,
+        "arrival_lon": float,
+        "departure_time": string,  # HH:MM
+        "arrival_time": string,    # HH:MM
+        "route_time_minutes": float
     }
-    return summary
-
-def calc_total_wait_time_before_departure_minutes(departure_time, arrival_time):
-    return departure_time - arrival_time
-
-def parse_time(time_str):
-    return datetime.strptime(time_str, "%H:%M")
-
-def find_ship_by_departure_time(routes: pd.DataFrame, arrival_time_buffer_wait_time):
-    try:
-        prev_arrival = parse_time(arrival_time_buffer_wait_time)
-        ships = []
-        
-        for _, row in routes.iterrows():
-            dep_str = row["Departure_Time"]
-            dep_time = parse_time(dep_str)
-
-            # Nếu Departure_Time < arrival_time trước → coi như xuất phát ngày hôm sau
-            # if dep_time < prev_arrival:
-            #     dep_time += timedelta(days=1)
-
-            # Giữ những chuyến phù hợp
-            if dep_time >= prev_arrival:
-                ships.append(row)
-
-        # Trả về DataFrame
-        return pd.DataFrame(ships)
-    except Exception as e:
-        print(f"Error find_ship_by_departure_time: {e}")
-        return []
-    
-def calc_wait_minutes(arrival_time: str, departure_time: str) -> float:
     """
-    Calculate the waiting time (in minutes) from when the truck arrives
-    until the train departs.
-    - truck_arrival_time, train_departure_time: strings in format "H:MM" or "HH:MM"
-    - If the train departure time is earlier than or equal to the truck arrival time
-      on the same day → assume the train departs on the NEXT day.
-    """
-    # Parse "H:MM" or "HH:MM"
-    arrival_time_hours, arrival_time_minutes = map(int, arrival_time.split(":"))
-    departure_time_hours, departure_time_minutes = map(int, departure_time.split(":"))
+    routes = []
 
-    # Assign both times to the same dummy date
-    base_date = datetime(1900, 1, 1)
-    arrival_time_dt = base_date.replace(hour=arrival_time_hours, minute=arrival_time_minutes)
-    departure_time_dt = base_date.replace(hour=departure_time_hours, minute=departure_time_minutes)
+    # Tạo lookup port: dùng cột C02_005 (tên port) hoặc X/Y cho lat/lon
+    # Giả sử bạn muốn dùng C02_005 làm code port
+    station_lookup = {}
+    for _, row in stations_data.iterrows():
+        port_name = row["C02_005"]  # port code/tên
+        station_lookup[port_name] = {
+            "name": port_name,
+            "lat": float(row["Y"]),
+            "lon": float(row["X"]),
+        }
 
-    # If train departs earlier or at the same time → move to the next day
-    if departure_time_dt <= arrival_time_dt:
-        departure_time_dt += timedelta(days=1)
+    for _, row in schedules_data.iterrows():
+        dep_code = row["Departure_Location_(National_Land_Numerical_Information_Format)"]
+        arr_code = row["Arrival_Location_(National_Land_Numerical_Information_Format)"]
 
-    delta = departure_time_dt - arrival_time_dt
-    return delta.total_seconds() / 60.0  # minutes
+        dep_station = station_lookup.get(dep_code)
+        arr_station = station_lookup.get(arr_code)
+
+        # Skip nếu port không có trong stations_data
+        if not dep_station or not arr_station:
+            continue
+
+        # Thời gian, route_time
+        dep_time = str(row["Departure_Time"])
+        arr_time = str(row["Arrival_Time"])
+        route_time = float(row["Route_Time"]) if not pd.isna(row["Route_Time"]) else None
+
+        routes.append({
+            "depature_name": dep_station["name"],
+            "depature_lat": dep_station["lat"],
+            "depature_lon": dep_station["lon"],
+            "arrival_name": arr_station["name"],
+            "arrival_lat": arr_station["lat"],
+            "arrival_lon": arr_station["lon"],
+            "departure_time": dep_time,
+            "arrival_time": arr_time,
+            "route_time_minutes": route_time,
+        })
+
+    return routes
+
