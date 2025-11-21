@@ -28,7 +28,7 @@ class Settings(BaseSettings):
     # PGPASSWORD: str = os.getenv("PGPASSWORD")
 
     PGHOST: str = "localhost"
-    PGPORT: int = 5432
+    PGPORT: int = 5434
     PGDATABASE: str = "pgrouting"
     PGUSER: str = "postgres"
     PGPASSWORD: str = "pgrouting"
@@ -129,42 +129,39 @@ app = FastAPI(title="Multimodal Truck/Train/Ship Router (FastAPI)")
 def get_route_map():
     data_folder_path = FOLDER_DATA
     db_config = {
-            "host": settings.PGHOST,
-            "port": settings.PGPORT,
-            "database": settings.PGDATABASE,
-            "user": settings.PGUSER,
-            "password": settings.PGPASSWORD,
-        }
-    route_optimizer = RouteOptimizer(data_folder_path, db_config)
-    # Load data
+        "host": settings.PGHOST,
+        "port": settings.PGPORT,
+        "database": settings.PGDATABASE,
+        "user": settings.PGUSER,
+        "password": settings.PGPASSWORD,
+    }
+
+    optimizer = RouteOptimizer(data_folder_path, db_config)
+
+    # Load ship data
     optimizer._load_ferry_schedule()
+    optimizer._load_port_data()
+
+    # Load train data
     optimizer._load_station_data()
     optimizer._load_train_schedule()
 
     # Process Ship data
-    ship_data = process_ship_data(
-        stations_data=route_optimizer.minato_gdf,  # GeoDataFrame các port
-        schedules_data=route_optimizer.ferry_time  # DataFrame lịch tàu
-    )
+    ship_schedule = optimizer.ferry_time
+    ship_ports = optimizer.minato_gdf
 
-
-    # Process Train data
-    # train_stations = route_optimizer.station_gdf
-    # train_schedules = route_optimizer.train_time
-    # ship_schedule = route_optimizer.ferry_time
-    # ship_data = process_ship_data(ship_schedule)
+    ship_data = process_ship_data(schedules_data=ship_schedule, ports_data=ship_ports)
 
     # Process Train data
     train_stations = optimizer.station_gdf
     train_schedules = optimizer.train_time
 
-    # train_data = process_train_data(
-    #     stations_data=train_stations, schedules_data=train_schedules
-    # )
+    train_data = process_train_data(
+        stations_data=train_stations, schedules_data=train_schedules
+    )
 
     # Combine data
-    # combined_data = {"ship_routes": ship_data, "train_routes": train_data}
-    combined_data = {"train_routes": train_data}
+    combined_data = {"ship_routes": ship_data, "train_routes": train_data}
 
     return combined_data
 
