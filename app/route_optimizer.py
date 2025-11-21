@@ -202,13 +202,9 @@ class RouteOptimizer:
             + self.train_time["Arrival_Station_Name"].str.replace(" ", "")
         )
 
-        
-
-        # Loại bỏ khoảng trắng
         self.train_time["Arrival_Time"] = self.train_time["Arrival_Time"].astype(str).str.strip()
         self.train_time["Arrival_Time"].replace("", pd.NaT, inplace=True)
 
-        # Cắt lấy phần HH:MM:SS nếu có cả ngày + giờ
         arrival_time_str = self.train_time["Arrival_Time"].astype(str).str.extract(
             r'(\d{2}:\d{2}:\d{2})'
         )[0]
@@ -216,13 +212,12 @@ class RouteOptimizer:
         self.train_time["Parse_Arrival_Time"] = pd.to_datetime(
             arrival_time_str,
             format="%H:%M:%S",
-            errors="coerce"   # cái nào không match regex sẽ thành NaT
+            errors="coerce"
         )
 
         self.train_time["Departure_Time"] = self.train_time["Departure_Time"].astype(str).str.strip()
         self.train_time["Departure_Time"].replace("", pd.NaT, inplace=True)
 
-        # Cắt lấy phần HH:MM:SS nếu có cả ngày + giờ
         departure_time_str = self.train_time["Departure_Time"].astype(str).str.extract(
             r'(\d{2}:\d{2}:\d{2})'
         )[0]
@@ -230,7 +225,7 @@ class RouteOptimizer:
         self.train_time["Parse_Departure_Time"] = pd.to_datetime(
             departure_time_str,
             format="%H:%M:%S",
-            errors="coerce"   # cái nào không match regex sẽ thành NaT
+            errors="coerce"   
         )
 
         # Add days to arrival time based on Arrival_Date

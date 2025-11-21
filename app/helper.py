@@ -390,6 +390,12 @@ def convert_numpy_types(obj):
         return obj
 
 def create_response(origin_name, origin_lat, origin_lon, destination_name, destination_lat, destination_lon, result):
+    final_result = []
+    if isinstance(result, dict):
+        final_result.append(result)
+    else:
+        final_result = result
+
     summary = {
         'origin_name': origin_name,
         'origin_lat': origin_lat,
@@ -399,7 +405,7 @@ def create_response(origin_name, origin_lat, origin_lon, destination_name, desti
         'destination_lat': destination_lat,
         'destination_lon': destination_lon,
         
-        'result': result
+        'result': final_result
     }
     return summary
 
