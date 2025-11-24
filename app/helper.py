@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 import geopandas as gpd
 from typing import Any, Dict, List, Optional
+import globals
 
 RouteDict = Dict[str, Any]
 
@@ -395,7 +396,11 @@ def calc_total_wait_time_before_departure_minutes(departure_time, arrival_time):
     return departure_time - arrival_time
 
 def parse_time(time_str):
-    return datetime.strptime(time_str, "%H:%M")
+    try:
+        times = datetime.strptime(time_str.strip(), "%H:%M:%S")
+        return datetime.strptime(times.strftime("%H:%M"), "%H:%M")
+    except ValueError:
+        return datetime.strptime(time_str, "%H:%M")
 
 def find_ship_by_departure_time(routes: pd.DataFrame, arrival_time_buffer_wait_time):
     try:
@@ -406,18 +411,42 @@ def find_ship_by_departure_time(routes: pd.DataFrame, arrival_time_buffer_wait_t
             dep_str = row["Departure_Time"]
             dep_time = parse_time(dep_str)
 
-            # Nếu Departure_Time < arrival_time trước → coi như xuất phát ngày hôm sau
+            # If the departure_time is earlier than the previous arrival_time, treat it as a departure on the next day.
             # if dep_time < prev_arrival:
             #     dep_time += timedelta(days=1)
 
-            # Giữ những chuyến phù hợp
             if dep_time >= prev_arrival:
                 ships.append(row)
 
-        # Trả về DataFrame
         return pd.DataFrame(ships)
     except Exception as e:
         print(f"Error find_ship_by_departure_time: {e}")
+        return []
+
+def find_train_by_departure_time(routes: pd.DataFrame, arrival_time_buffer_wait_time):
+    try:
+        routes["Departure_Time_Parsed"] = pd.to_datetime(routes["Departure_Time"])
+        routes = routes.sort_values("Departure_Time_Parsed")
+
+        print(routes['Departure_Time'])
+
+        prev_arrival = parse_time(arrival_time_buffer_wait_time)
+        trains = []
+        for _, row in routes.iterrows():
+            dep_str = row["Departure_Time"]
+            dep_time = parse_time(dep_str)
+
+
+            # If the departure_time is earlier than the previous arrival_time, treat it as a departure on the next day.
+            # if dep_time < prev_arrival:
+            #     dep_time += timedelta(days=1)
+
+            if dep_time >= prev_arrival:
+                trains.append(row)
+
+        return pd.DataFrame(trains)
+    except Exception as e:
+        print(f"Error find_trains_by_departure_time: {e}")
         return []
     
 def calc_wait_minutes(arrival_time: str, departure_time: str) -> float:
@@ -615,3 +644,16 @@ def process_ship_data(
         )
 
     return routes
+
+def reset_global_states():
+    globals.GLOBAL_STATE = {
+        "departure_time": "00:00",
+        "arrival_time": "00:00",
+        "total_time_minutes": 0,
+        "total_move_time_minutes": 0,
+        "total_distance_km": 0,
+        "total_co2_emissions_grams": 0,
+        "arrival_time_buffer_wait_time": "00:00",
+        "arrival_time_previous_route": 0,
+        "warning_message": ""
+    }

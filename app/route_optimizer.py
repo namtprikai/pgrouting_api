@@ -22,7 +22,9 @@ from helper import (
     add_hours,
     create_features,
     find_ship_by_departure_time,
-    calc_wait_minutes
+    find_train_by_departure_time,
+    calc_wait_minutes,
+    reset_global_states
 )
 
 try:
@@ -251,8 +253,8 @@ class RouteOptimizer:
         )
 
         # Remove duplicates
-        self.train_time = self.train_time.drop_duplicates(subset=["train_od"])
-        self.train_time = self.train_time.drop_duplicates(subset=["train_od2"])
+        # self.train_time = self.train_time.drop_duplicates(subset=["train_od"])
+        # self.train_time = self.train_time.drop_duplicates(subset=["train_od2"])
 
     def find_route(
         self,
@@ -486,6 +488,7 @@ class RouteOptimizer:
 
         # Route 1: Truck only
         if mode == "truck_only":
+            reset_global_states()
             truck_route = self._calculate_truck_route(
                 origin_point,
                 dest_point,
@@ -505,7 +508,7 @@ class RouteOptimizer:
                 nearest_ports["origin_port"] is not None
                 and nearest_ports["dest_port"] is not None
             ):
-
+                reset_global_states()
                 # Step 1: Find truck routes to nearest ports
                 truck_routes = self._get_truck_routes_to_ports(
                     origin_point, dest_point, nearest_ports, input_departure_hour, origin_name, destination_name, weight_tons
@@ -531,54 +534,30 @@ class RouteOptimizer:
 
         # Route 3: Truck + Train
         if mode == "truck_train":
-            truck_route_1, train_route, truck_route_2 = (
-                self._calculate_train_route_modified(
-                    input_departure_hour,
-                    origin_point,
-                    dest_point,
-                    origin_name,
-                    destination_name,
-                    nearest_stations,
-                    weight_tons,
+            if (nearest_stations['origin_station'] is not None and 
+                nearest_stations['dest_station'] is not None):
+                reset_global_states()
+                # Step 1: Find truck routes to nearest stations
+                truck_routes = self._get_truck_routes_to_stations(
+                    origin_point, dest_point, nearest_stations, input_departure_hour, origin_name, destination_name, weight_tons
                 )
-            )
 
-            origin_station_name = nearest_stations["origin_station"]["Station_Name"]
-            dest_station_name = nearest_stations["dest_station"]["Station_Name"]
+                if truck_routes:
+                    # Step 2: Find train routes between stations (direct or via transfer)
+                    train_routes = self._find_train_routes_between_stations(
+                        nearest_stations, weight_tons, max_transfers, show_all
+                    )
 
-            segments = [
-                (
-                    truck_route_1,
-                    MESSAGES["truck_route_not_found"].format(
-                        origin=origin_name, destination=origin_station_name
-                    ),
-                ),
-                (
-                    train_route,
-                    MESSAGES["train_route_not_found"].format(
-                        origin=origin_station_name, destination=dest_station_name
-                    ),
-                ),
-                (
-                    truck_route_2,
-                    MESSAGES["truck_route_not_found"].format(
-                        origin=dest_station_name, destination=destination_name
-                    ),
-                ),
-            ]
-
-            for segment, error_msg in segments:
-                if segment:
-                    routes.append(segment)
-                else:
-                    return {
-                        "isError": True,
-                        "data": [],
-                        "message": error_msg,
-                    }
+                    if train_routes:
+                        # Step 3: Combine truck routes + train routes
+                        combined_routes = self._combine_truck_train_routes(
+                            truck_routes, train_routes, nearest_stations, weight_tons
+                        )
+                        routes.extend(combined_routes)
 
         # Route 4: Truck + Ship + Train
         if mode == "truck_ship_train":
+            reset_global_states()
             # 1. Find origin port
             origin_port = nearest_ports["origin_port"]
 
@@ -730,6 +709,7 @@ class RouteOptimizer:
 
         # Route 5: Truck + Train + Ship + Train
         if mode == "truck_train_ship_train":
+            reset_global_states()
             # FIND IMPORTANT POINTS
             # 3. Find origin port
             origin_port = nearest_ports["origin_port"]
@@ -1040,6 +1020,7 @@ class RouteOptimizer:
 
         # Route 6: Truck + Train + Ship
         if mode == "truck_train_ship":
+            reset_global_states()
             # FIND IMPORTANT POINTS
             # 3. Find origin port
             origin_port = nearest_ports["origin_port"]
@@ -1992,7 +1973,7 @@ class RouteOptimizer:
             return None, None, None
 
     def _get_truck_routes_to_stations(
-        self, origin_point: Point, dest_point: Point, nearest_stations: Dict
+        self, origin_point: Point, dest_point: Point, nearest_stations: Dict, input_departure_hour: str = '', origin_name: str = '', destination_name: str = '', weight_tons: float = 0
     ) -> Optional[Dict]:
         """Step 1: Find truck routes to nearest stations"""
         try:
@@ -2007,12 +1988,70 @@ class RouteOptimizer:
             )
 
             if origin_to_station and station_to_dest:
-                return {
+                truck_routes = {
                     "origin_to_station": origin_to_station,
                     "station_to_dest": station_to_dest,
                     "origin_station": origin_station,
                     "dest_station": dest_station,
                 }
+
+                origin_distance_km = 0 if np.isnan(origin_to_station["distance"]) else round(origin_to_station["distance"]/1000, 2)
+                origin_co2_emissions = self._calculate_co2_emissions('truck', weight_tons, origin_distance_km)
+                origin_travel_time = self._calculate_travel_time(input_departure_hour, round(origin_to_station["time"]/60, 2), False)
+                
+                globals.GLOBAL_STATE["departure_time"] = origin_travel_time['departure_time']
+                globals.GLOBAL_STATE["arrival_time_buffer_wait_time"] = add_hours(origin_travel_time['arrival_time'], 1.5)
+                globals.GLOBAL_STATE["arrival_time_previous_route"] = origin_travel_time['arrival_time']
+                
+                origin_to_station_routes = {
+                    "departure_time": origin_travel_time['departure_time'],
+                    "arrival_time": origin_travel_time['arrival_time'],
+                    "total_wait_time_before_departure_minutes": 0,
+                    "origin_name": origin_name,
+                    "destination_name": origin_station["Station_Name"],
+                    "total_time_minutes": (
+                        0 if np.isnan(origin_to_station["time"]) else round(origin_to_station["time"], 2)
+                    ),
+                    "total_distance_meters": (
+                        0
+                        if np.isnan(origin_to_station["distance"])
+                        else round(origin_to_station["distance"], 2)
+                    ),
+                    "total_distance_km": origin_distance_km,
+                    "total_co2_emissions_grams": (
+                        0 if np.isnan(origin_co2_emissions) else round(origin_co2_emissions, 2)
+                    ),
+                    "geometry": origin_to_station["geometry"],
+                }
+                truck_routes['origin_to_station_routes'] = origin_to_station_routes
+
+                dest_distance_km = 0 if np.isnan(station_to_dest["distance"]) else round(station_to_dest["distance"]/1000, 2)
+                dest_co2_emissions = self._calculate_co2_emissions('truck', weight_tons, dest_distance_km)
+                dest_travel_time = self._calculate_travel_time(input_departure_hour, station_to_dest["time"]/60, False)
+                dest_travel_time_wait = self._calculate_travel_time(input_departure_hour, round(station_to_dest["time"]/60, 2), True)
+                
+                station_to_dest_routes = {
+                    "departure_time": dest_travel_time['departure_time'],
+                    "arrival_time": dest_travel_time['arrival_time'],
+                    "total_wait_time_before_departure": dest_travel_time_wait['arrival_time'],
+                    "origin_name": dest_station['Station_Name'],
+                    "destination_name": destination_name,
+                    "total_time_minutes": (
+                        0 if np.isnan(station_to_dest["time"]) else round(station_to_dest["time"], 2)
+                    ),
+                    "total_distance_meters": (
+                        0
+                        if np.isnan(station_to_dest["distance"])
+                        else round(station_to_dest["distance"], 2)
+                    ),
+                    "total_distance_km": origin_distance_km,
+                    "total_co2_emissions_grams": (
+                        0 if np.isnan(dest_co2_emissions) else round(dest_co2_emissions, 2)
+                    ),
+                    "geometry": station_to_dest["geometry"],
+                }
+                truck_routes['station_to_dest_routes'] = station_to_dest_routes
+                return truck_routes
             else:
                 return None
 
@@ -2038,17 +2077,36 @@ class RouteOptimizer:
             )
 
             if direct_train:
+                co2_emissions = self._calculate_co2_emissions('train', weight_tons, direct_train["distance"] / 1000)
+                total_wait_time_before_departure_minutes = calc_wait_minutes(globals.GLOBAL_STATE["arrival_time_previous_route"], direct_train['departure_time'])
+                globals.GLOBAL_STATE["arrival_time_previous_route"] = direct_train['arrival_time']
                 return [
                     {
                         "type": "direct",
                         "route_info": direct_train,
                         "transfer_stations": [],
+                        "vehicle": VEHICLES['train'],
+                        "departure_time": direct_train['departure_time'],
+                        "arrival_time": direct_train['arrival_time'],
+                        "origin_name": origin_station["Station_Name"],
+                        "destination_name": dest_station["Station_Name"],
+                        "total_wait_time_before_departure_minutes": total_wait_time_before_departure_minutes,
+                        "total_time_minutes": (
+                            0 if np.isnan(direct_train['time']) else round(direct_train['time'], 2)
+                        ),
+                        "total_distance_meters": (
+                            0
+                            if np.isnan(direct_train["distance"])
+                            else round(direct_train["distance"], 2)
+                        ),
+                        "total_distance_km": 0 if np.isnan(direct_train["distance"]) else round(direct_train["distance"] / 1000, 2),
+                        "total_co2_emissions_grams": co2_emissions
                     }
                 ]
             else:
                 # Find train routes via transfer
                 transfer_routes = self._find_train_transfer_routes(
-                    origin_station, dest_station, max_transfers
+                    origin_station, dest_station, max_transfers, weight_tons
                 )
                 return transfer_routes
 
@@ -2075,6 +2133,7 @@ class RouteOptimizer:
                     route = self._create_combined_route(
                         truck_routes,
                         train_route["route_info"],
+                        train_route,
                         origin_station,
                         dest_station,
                         weight_tons,
@@ -2087,6 +2146,7 @@ class RouteOptimizer:
                     route = self._create_combined_route(
                         truck_routes,
                         train_route["route_info"],
+                        train_route,
                         origin_station,
                         dest_station,
                         weight_tons,
@@ -2102,7 +2162,7 @@ class RouteOptimizer:
             return []
 
     def _find_train_transfer_routes(
-        self, origin_station: Dict, dest_station: Dict, max_transfers: int
+        self, origin_station: Dict, dest_station: Dict, max_transfers: int, weight_tons: float
     ) -> List[Dict]:
         """Find train routes via transfer"""
         try:
@@ -2136,6 +2196,16 @@ class RouteOptimizer:
                     total_time = leg1["time"] + leg2["time"]
                     total_distance = leg1["distance"] + leg2["distance"]
 
+                    leg1_co2_emissions = self._calculate_co2_emissions('train', weight_tons, (leg1["distance"] / 1000) * 1.5)
+                    leg2_co2_emissions = self._calculate_co2_emissions('train', weight_tons, (leg2["distance"] / 1000) * 1.5)
+
+                    leg1_total_wait_time_before_departure_minutes = calc_wait_minutes(globals.GLOBAL_STATE["arrival_time_previous_route"], leg1['departure_time'])
+                    globals.GLOBAL_STATE["arrival_time_previous_route"] = leg1['arrival_time']
+
+                    leg2_total_wait_time_before_departure_minutes = calc_wait_minutes(globals.GLOBAL_STATE["arrival_time_previous_route"], leg2['departure_time'])
+                    globals.GLOBAL_STATE["arrival_time_previous_route"] = leg2['arrival_time']
+
+
                     routes.append(
                         {
                             "type": "transfer",
@@ -2143,7 +2213,33 @@ class RouteOptimizer:
                                 "time": total_time,
                                 "distance": total_distance,
                             },
-                            "transfer_stations": [str(transfer_station)],
+                            "transfer_stations": [str(transfer_stations)],
+                            "leg1": {
+                                "vehicle": VEHICLES['train'],
+                                "origin_name": origin_station["Station_Name"],
+                                "destination_name": transfer_station,
+                                "departure_time": leg1['departure_time'],
+                                "arrival_time": leg1['arrival_time'],
+                                "total_wait_time_before_departure_minutes": leg1_total_wait_time_before_departure_minutes,
+                                "total_time_minutes": (
+                                    0 if np.isnan(leg1['time']) else round(leg1['time'], 2)
+                                ),
+                                "total_distance_km": 0 if np.isnan(leg1["distance"]) else round((leg1["distance"] / 1000)*1.5, 2),
+                                "total_co2_emissions_grams": leg1_co2_emissions
+                            },
+                            "leg2": {
+                                "vehicle": VEHICLES['train'],
+                                "origin_name": transfer_station,
+                                "destination_name": dest_station["Station_Name"],
+                                "departure_time": leg2['departure_time'],
+                                "arrival_time": leg2['arrival_time'],
+                                "total_wait_time_before_departure_minutes": leg2_total_wait_time_before_departure_minutes,
+                                "total_time_minutes": (
+                                    0 if np.isnan(leg2['time']) else round(leg2['time'], 2)
+                                ),
+                                "total_distance_km": 0 if np.isnan(leg2["distance"]) else round((leg2["distance"] / 1000)*1.5, 2),
+                                "total_co2_emissions_grams": leg2_co2_emissions
+                            }
                         }
                     )
 
@@ -2157,6 +2253,7 @@ class RouteOptimizer:
         self,
         truck_routes: Dict,
         train_info: Dict,
+        train_route: Dict,
         origin_station: Dict,
         dest_station: Dict,
         weight_tons: float,
@@ -2173,9 +2270,7 @@ class RouteOptimizer:
             )
 
             total_distance = (
-                origin_to_station["distance"]
-                + station_to_dest["distance"]
-                + train_info["distance"] * 1000  # Convert km to meters
+                origin_to_station["distance"] + station_to_dest["distance"] + train_info["distance"] * 1000  # Convert km to meters
             )
 
             # Calculate CO2 emissions
@@ -2200,8 +2295,12 @@ class RouteOptimizer:
                 transfer_stations,
             )
 
+            # Create train geometry
+            train_geometry = self._create_train_coords(origin_station, dest_station, transfer_stations)
+
             # Create route name
             if transfer_stations:
+                train_segments = self.split_coords_into_segments(train_geometry)
                 route_name = (
                     f"Truck + Train (transfer via {', '.join(transfer_stations)})"
                 )
@@ -2209,7 +2308,134 @@ class RouteOptimizer:
             else:
                 route_name = "Truck + Train"
                 mode = "truck_train"
-            print(origin_station, "origin_station")
+            
+            features = []
+            # ---- Feature 1: Truck (Origin → Origin Station)
+            f1 = {
+                "vehicle": VEHICLES['truck'],
+                "departure_time": truck_routes['origin_to_station_routes']['departure_time'],
+                "arrival_time": truck_routes['origin_to_station_routes']['arrival_time'],
+                "total_wait_time_before_departure_minutes": truck_routes['origin_to_station_routes']['total_wait_time_before_departure_minutes'],
+                "origin_name": truck_routes['origin_to_station_routes']['origin_name'],
+                "destination_name": truck_routes['origin_to_station_routes']['destination_name'],
+                "total_time_minutes": (
+                    0 if np.isnan(truck_routes['origin_to_station_routes']['total_time_minutes']) else truck_routes['origin_to_station_routes']['total_time_minutes']
+                ),
+                "total_distance_meters": (
+                    0
+                    if np.isnan(truck_routes['origin_to_station_routes']['total_distance_meters'])
+                    else truck_routes['origin_to_station_routes']['total_distance_meters']
+                ),
+                "total_distance_km": 0 if np.isnan(truck_routes['origin_to_station_routes']['total_distance_km']) else truck_routes['origin_to_station_routes']['total_distance_km'],
+                "total_co2_emissions_grams": (
+                    0 if np.isnan(truck_routes['origin_to_station_routes']['total_co2_emissions_grams']) else truck_routes['origin_to_station_routes']['total_co2_emissions_grams']
+                ),
+                "geometry": origin_to_station["geometry"],
+            }
+            features.append(f1)
+            globals.GLOBAL_STATE['total_time_minutes'] += f1['total_time_minutes'] + f1['total_wait_time_before_departure_minutes']
+            globals.GLOBAL_STATE['total_move_time_minutes'] += f1['total_time_minutes']
+            globals.GLOBAL_STATE['total_distance_km'] += f1['total_distance_km']
+            globals.GLOBAL_STATE['total_co2_emissions_grams'] += f1['total_co2_emissions_grams']
+
+            if transfer_stations:
+                f2 = {
+                    "vehicle": VEHICLES['train'],
+                    "departure_time": train_route['leg1']['departure_time'],
+                    "arrival_time": train_route['leg1']['arrival_time'],
+                    "total_wait_time_before_departure_minutes": train_route['leg1']['total_wait_time_before_departure_minutes'],
+                    "origin_name": train_route['leg1']['origin_name'],
+                    "destination_name": train_route['leg1']['destination_name'],
+                    "total_time_minutes": (
+                        0 if np.isnan(train_route['leg1']['total_time_minutes']) else train_route['leg1']['total_time_minutes']
+                    ),
+                    "total_distance_km": 0 if np.isnan(train_route['leg1']['total_distance_km']) else train_route['leg1']['total_distance_km'],
+                    "total_co2_emissions_grams": (
+                        0 if np.isnan(train_route['leg1']['total_co2_emissions_grams']) else train_route['leg1']['total_co2_emissions_grams']
+                    ),
+                    "geometry": train_segments[0] if transfer_stations else train_geometry,
+                }
+                features.append(f2)
+                globals.GLOBAL_STATE['total_time_minutes'] += (f2['total_time_minutes'] + f2['total_wait_time_before_departure_minutes'])
+                globals.GLOBAL_STATE['total_move_time_minutes'] += f2['total_time_minutes']
+                globals.GLOBAL_STATE['total_distance_km'] += f2['total_distance_km']
+                globals.GLOBAL_STATE['total_co2_emissions_grams'] += f2['total_co2_emissions_grams']
+
+                f3 = {
+                    "vehicle": VEHICLES['train'],
+                    "departure_time": train_route['leg2']['departure_time'],
+                    "arrival_time": train_route['leg2']['arrival_time'],
+                    "total_wait_time_before_departure_minutes": train_route['leg2']['total_wait_time_before_departure_minutes'],
+                    "origin_name": train_route['leg2']['origin_name'],
+                    "destination_name": train_route['leg2']['destination_name'],
+                    "total_time_minutes": (
+                        0 if np.isnan(train_route['leg2']['total_time_minutes']) else train_route['leg2']['total_time_minutes']
+                    ),
+                    "total_distance_km": 0 if np.isnan(train_route['leg2']['total_distance_km']) else train_route['leg2']['total_distance_km'],
+                    "total_co2_emissions_grams": (
+                        0 if np.isnan(train_route['leg2']['total_co2_emissions_grams']) else train_route['leg2']['total_co2_emissions_grams']
+                    ),
+                    "geometry": train_segments[1],
+                }
+                features.append(f3)
+                globals.GLOBAL_STATE['total_time_minutes'] += (f3['total_time_minutes'] + f3['total_wait_time_before_departure_minutes'])
+                globals.GLOBAL_STATE['total_move_time_minutes'] += f3['total_time_minutes']
+                globals.GLOBAL_STATE['total_distance_km'] += f3['total_distance_km']
+                globals.GLOBAL_STATE['total_co2_emissions_grams'] += f3['total_co2_emissions_grams']
+            else:
+                f2 = {
+                    "vehicle": VEHICLES['train'],
+                    "departure_time": train_route['departure_time'],
+                    "arrival_time": train_route['arrival_time'],
+                    "total_wait_time_before_departure_minutes": train_route['total_wait_time_before_departure_minutes'],
+                    "origin_name": train_route['origin_name'],
+                    "destination_name": train_route['destination_name'],
+                    "total_time_minutes": (
+                        0 if np.isnan(train_route['total_time_minutes']) else train_route['total_time_minutes']
+                    ),
+                    "total_distance_km": 0 if np.isnan(train_route['total_distance_km']) else train_route['total_distance_km'],
+                    "total_co2_emissions_grams": (
+                        0 if np.isnan(train_route['total_co2_emissions_grams']) else train_route['total_co2_emissions_grams']
+                    ),
+                    "geometry": train_segments[0] if transfer_stations else train_geometry,
+                }
+                features.append(f2)
+                globals.GLOBAL_STATE['total_time_minutes'] += (f2['total_time_minutes'] + f2['total_wait_time_before_departure_minutes'])
+                globals.GLOBAL_STATE['total_move_time_minutes'] += f2['total_time_minutes']
+                globals.GLOBAL_STATE['total_distance_km'] += f2['total_distance_km']
+                globals.GLOBAL_STATE['total_co2_emissions_grams'] += f2['total_co2_emissions_grams']
+
+            ship_arrival_time = f3['arrival_time'] if transfer_stations else f2['arrival_time']
+            truck_departure_time = add_hours(ship_arrival_time, 1.5)
+            truck_travel_time = self._calculate_travel_time(truck_departure_time, truck_routes['station_to_dest_routes']['total_time_minutes'] / 60, False)
+            globals.GLOBAL_STATE["arrival_time"] = truck_travel_time['arrival_time']
+            f4 = {
+                "vehicle": VEHICLES['truck'],
+                "departure_time": truck_departure_time,
+                "arrival_time": truck_travel_time['arrival_time'],
+                "total_wait_time_before_departure_minutes": calc_wait_minutes(globals.GLOBAL_STATE['arrival_time_previous_route'], truck_departure_time),
+                "origin_name": truck_routes['station_to_dest_routes']['origin_name'],
+                "destination_name": truck_routes['station_to_dest_routes']['destination_name'],
+                "total_time_minutes": (
+                    0 if np.isnan(truck_routes['station_to_dest_routes']['total_time_minutes']) else truck_routes['station_to_dest_routes']['total_time_minutes']
+                ),
+                "total_distance_meters": (
+                    0
+                    if np.isnan(truck_routes['station_to_dest_routes']['total_distance_meters'])
+                    else truck_routes['station_to_dest_routes']['total_distance_meters']
+                ),
+                "total_distance_km": 0 if np.isnan(truck_routes['station_to_dest_routes']['total_distance_km']) else truck_routes['station_to_dest_routes']['total_distance_km'],
+                "total_co2_emissions_grams": (
+                    0 if np.isnan(truck_routes['station_to_dest_routes']['total_co2_emissions_grams']) else truck_routes['station_to_dest_routes']['total_co2_emissions_grams']
+                ),
+                "geometry": station_to_dest.get("geometry"),
+            }
+            features.append(f4)
+            globals.GLOBAL_STATE['total_time_minutes'] += (f4['total_time_minutes'] + f4['total_wait_time_before_departure_minutes'])
+            globals.GLOBAL_STATE['total_move_time_minutes'] += f4['total_time_minutes']
+            globals.GLOBAL_STATE['total_distance_km'] += f4['total_distance_km']
+            globals.GLOBAL_STATE['total_co2_emissions_grams'] += f4['total_co2_emissions_grams']
+
             return {
                 "mode": mode,
                 "total_time_minutes": total_time,
@@ -2221,20 +2447,13 @@ class RouteOptimizer:
                 "origin_station": origin_station["Station_Name"],
                 "dest_station": dest_station["Station_Name"],
                 "transfer_port": "",
-                "transfer_station": (
-                    ", ".join(str(s) for s in transfer_stations)
-                    if transfer_stations
-                    else ""
-                ),
+                "transfer_station": ", ".join(transfer_stations) if transfer_stations else "",
                 "ship_time_hours": 0,
                 "train_time_minutes": train_info["time"],
-                "truck_time_minutes": origin_to_station["time"]
-                + station_to_dest["time"],
-                "truck_distance_km": (
-                    origin_to_station["distance"] + station_to_dest["distance"]
-                )
-                / 1000,
+                "truck_time_minutes": origin_to_station["time"] + station_to_dest["time"],
+                "truck_distance_km": (origin_to_station["distance"] + station_to_dest["distance"])/ 1000,
                 "geometry": geometry,
+                "features": features
             }
 
         except Exception as e:
@@ -2929,6 +3148,36 @@ class RouteOptimizer:
                 (origin_port["X"], origin_port["Y"]),
                 (dest_port["X"], dest_port["Y"]),
             ]
+        
+    def _create_train_coords(self, origin_station, dest_station, transfer_stations):
+        # Create train segment
+        if transfer_stations:
+            # Train route via transfer - need to find coordinates of transfer stations
+            train_coords = [(origin_station["lon"], origin_station["lat"])]
+
+            # Add coordinates of transfer stations
+            for transfer_station in transfer_stations:
+                # Find coordinates of transfer station
+                transfer_station_info = self.station_gdf[
+                    self.station_gdf["Station_Code"] == transfer_station
+                ]
+                if not transfer_station_info.empty:
+                    transfer_coords = (
+                        transfer_station_info["lon"].iloc[0],
+                        transfer_station_info["lat"].iloc[0],
+                    )
+                    train_coords.append(transfer_coords)
+
+            # Add final destination
+            train_coords.append((dest_station["lon"], dest_station["lat"]))
+        else:
+            # Direct train route
+            train_coords = [
+                (origin_station["lon"], origin_station["lat"]),
+                (dest_station["lon"], dest_station["lat"]),
+            ]
+
+        return train_coords
 
     def _get_geometry_coords(self, geometry) -> List[Tuple[float, float]]:
         """Get coordinates from geometry (handles both Shapely and GeoJSON)"""
@@ -3131,7 +3380,7 @@ class RouteOptimizer:
         # Convert results to GeoJSON format
         geojson_data = self._convert_to_geojson(results)
 
-        with open(output_path, "w", encoding="utf-8") as f:
+        with open(OUTPUT_FOLDER + output_path, "w", encoding="utf-8") as f:
             json.dump(geojson_data, f, ensure_ascii=False, indent=2)
 
     def _convert_to_geojson(self, results: Dict) -> Dict:
@@ -3571,9 +3820,16 @@ class RouteOptimizer:
             & (self.train_time["Arrival_Station_Code"] == dest_station_code)
         ]
 
+        print(route, '///////')
+
         if not route.empty:
+            train_data = find_train_by_departure_time(route, globals.GLOBAL_STATE['arrival_time_buffer_wait_time'])
+
+            departure_time = train_data["Departure_Time"].iloc[0] if train_data["Departure_Time"].iloc[0] else globals.GLOBAL_STATE["arrival_time_previous_route"]
+            arrival_time = train_data["Arrival_Time"].iloc[0] if train_data["Arrival_Time"].iloc[0] else None
+
             # Calculate travel time from train_Duration
-            duration = route["train_Duration"].iloc[0]
+            duration = route["train_Duration2"].iloc[0]
             if hasattr(duration, "total_seconds"):
                 time_minutes = duration.total_seconds() / 60
             else:
@@ -3582,10 +3838,14 @@ class RouteOptimizer:
             # Estimate distance (can be improved by using real data)
             distance_km = time_minutes * 50  # Assume average speed 50 km/h
 
-            return {
-                "time": time_minutes,
-                "distance": distance_km * 1000,  # Convert to meters
-            }
+            departure_time_dt = datetime.strptime(departure_time.strip(), "%H:%M:%S")
+            departure_time = departure_time_dt.strftime("%H:%M")
+
+            arrival_time_dt = datetime.strptime(arrival_time.strip(), "%H:%M:%S")
+            arrival_time = arrival_time_dt.strftime("%H:%M")
+
+
+            return {"time": time_minutes, "distance": distance_km * 1000, 'departure_time': departure_time, 'arrival_time': arrival_time}
 
         return None
 
