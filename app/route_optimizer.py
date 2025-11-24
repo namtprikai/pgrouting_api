@@ -128,7 +128,7 @@ class RouteOptimizer:
 
     def _load_station_data(self):
         """Load freight station data"""
-        station = pd.read_excel(f"{self.data_folder_path}/貨物駅_位置情報.xlsx")
+        station = pd.read_csv(f"{self.data_folder_path}/貨物駅_位置情報.csv")
         self.station_gdf = gpd.GeoDataFrame(
             station, geometry=gpd.points_from_xy(station["lon"], station["lat"])
         )
@@ -159,7 +159,7 @@ class RouteOptimizer:
 
     def _load_train_schedule(self):
         """Load train schedule"""
-        self.train_time = pd.read_excel(f"{self.data_folder_path}/貨物駅_時刻表.xlsx")
+        self.train_time = pd.read_csv(f"{self.data_folder_path}/貨物駅_時刻表.csv")
 
         # Replace arrival date
         self.train_time["Arrival_Date_Before"] = self.train_time["Arrival_Date"]
@@ -266,7 +266,7 @@ class RouteOptimizer:
         destination_name,
         input_departure_hour: str,
         weight_tons: float = 10.0,
-        mode: str = "all",
+        mode: list = ["truck_only"],
         enable_transfer: bool = False,
         max_transfers: int = 10,
         show_all: bool = False,
@@ -302,8 +302,9 @@ class RouteOptimizer:
             "truck_train_ship",
             "truck_train_ship_train",
         ]
-        if mode not in valid_modes:
-            raise ValueError(f"Invalid mode '{mode}'. Must be one of: {valid_modes}")
+        for m in mode:
+            if m not in valid_modes:
+                raise ValueError(f"Invalid mode '{m}'. Must be one of: {valid_modes}")
 
         # Create origin and destination points
         origin_point = Point(origin_lon, origin_lat)
@@ -467,7 +468,6 @@ class RouteOptimizer:
             "arrival_time": f"{arrival_hours:02d}:{arrival_minutes:02d}",
         }
 
-
     def _calculate_routes_by_mode(
         self,
         origin_point: Point,
@@ -477,7 +477,7 @@ class RouteOptimizer:
         origin_name: str,
         destination_name: str,
         weight_tons: float,
-        mode: str,
+        mode: list,
         input_departure_hour: str,
         enable_transfer: bool = False,
         max_transfers: int = 10,
@@ -485,75 +485,77 @@ class RouteOptimizer:
     ) -> List[Dict]:
         """Calculate routes by selected mode"""
         routes = []
+        
+        for mode in mode:
 
-        # Route 1: Truck only
-        if mode == "truck_only":
-            reset_global_states()
-            truck_route = self._calculate_truck_route(
-                origin_point,
-                dest_point,
-                weight_tons,
-                input_departure_hour,
-                origin_name,
-                destination_name,
-            )
-            if truck_route:
-                routes.append(truck_route)
-            else:
-                return {'isError': True, 'data': [], 'message': 'Truck route not found'}
-
-        # Route 2: Truck + Ship
-        if mode == "truck_ship":
-            if (
-                nearest_ports["origin_port"] is not None
-                and nearest_ports["dest_port"] is not None
-            ):
+            # Route 1: Truck only
+            if mode == "truck_only":
                 reset_global_states()
-                # Step 1: Find truck routes to nearest ports
-                truck_routes = self._get_truck_routes_to_ports(
-                    origin_point, dest_point, nearest_ports, input_departure_hour, origin_name, destination_name, weight_tons
+                truck_route = self._calculate_truck_route(
+                    origin_point,
+                    dest_point,
+                    weight_tons,
+                    input_departure_hour,
+                    origin_name,
+                    destination_name,
                 )
-
-                if truck_routes:
-                    # Step 2: Find ship routes between ports (direct or via transfer)
-                    ship_routes = self._find_ship_routes_between_ports(
-                        nearest_ports, weight_tons, max_transfers, show_all
-                    )
-
-                    if ship_routes:
-                        # Step 3: Combine truck routes + ship routes
-                        combined_routes = self._combine_truck_ship_routes(
-                            truck_routes, ship_routes, nearest_ports, weight_tons
-                        )
-                    
-                        routes.extend(combined_routes)
-                    else:
-                        return {'isError': True, 'data': [], 'message': MESSAGES['ship_route_not_found']}
+                if truck_route:
+                    routes.append(truck_route)
                 else:
                     return {'isError': True, 'data': [], 'message': 'Truck route not found'}
 
-        # Route 3: Truck + Train
-        if mode == "truck_train":
-            if (nearest_stations['origin_station'] is not None and 
-                nearest_stations['dest_station'] is not None):
-                reset_global_states()
-                # Step 1: Find truck routes to nearest stations
-                truck_routes = self._get_truck_routes_to_stations(
-                    origin_point, dest_point, nearest_stations, input_departure_hour, origin_name, destination_name, weight_tons
-                )
-
-                if truck_routes:
-                    # Step 2: Find train routes between stations (direct or via transfer)
-                    train_routes = self._find_train_routes_between_stations(
-                        nearest_stations, weight_tons, max_transfers, show_all
+            # Route 2: Truck + Ship
+            if mode == "truck_ship":
+                if (
+                    nearest_ports["origin_port"] is not None
+                    and nearest_ports["dest_port"] is not None
+                ):
+                    reset_global_states()
+                    # Step 1: Find truck routes to nearest ports
+                    truck_routes = self._get_truck_routes_to_ports(
+                        origin_point, dest_point, nearest_ports, input_departure_hour, origin_name, destination_name, weight_tons
                     )
 
-                    if train_routes:
-                        # Step 3: Combine truck routes + train routes
-                        combined_routes = self._combine_truck_train_routes(
-                            truck_routes, train_routes, nearest_stations, weight_tons
+                    if truck_routes:
+                        # Step 2: Find ship routes between ports (direct or via transfer)
+                        ship_routes = self._find_ship_routes_between_ports(
+                            nearest_ports, weight_tons, max_transfers, show_all
                         )
-                        routes.extend(combined_routes)
+
+                        if ship_routes:
+                            # Step 3: Combine truck routes + ship routes
+                            combined_routes = self._combine_truck_ship_routes(
+                                truck_routes, ship_routes, nearest_ports, weight_tons
+                            )
+                        
+                            routes.extend(combined_routes)
+                        else:
+                            return {'isError': True, 'data': [], 'message': MESSAGES['ship_route_not_found']}
+                    else:
+                        return {'isError': True, 'data': [], 'message': 'Truck route not found'}
+
+            # Route 3: Truck + Train
+            if mode == "truck_train":
+                if (nearest_stations['origin_station'] is not None and 
+                    nearest_stations['dest_station'] is not None):
+                    reset_global_states()
+                    # Step 1: Find truck routes to nearest stations
+                    truck_routes = self._get_truck_routes_to_stations(
+                        origin_point, dest_point, nearest_stations, input_departure_hour, origin_name, destination_name, weight_tons
+                    )
+
+                    if truck_routes:
+                        # Step 2: Find train routes between stations (direct or via transfer)
+                        train_routes = self._find_train_routes_between_stations(
+                            nearest_stations, weight_tons, max_transfers, show_all
+                        )
+
+                        if train_routes:
+                            # Step 3: Combine truck routes + train routes
+                            combined_routes = self._combine_truck_train_routes(
+                                truck_routes, train_routes, nearest_stations, weight_tons
+                            )
+                            routes.extend(combined_routes)
 
         # Route 4: Truck + Ship + Train
         if mode == "truck_ship_train":
