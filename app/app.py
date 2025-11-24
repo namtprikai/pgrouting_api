@@ -9,6 +9,10 @@ from helper import process_ship_data, process_train_data
 from constant import *
 from helper import create_response, save_summary_to_geojson
 import threading
+from starlette.middleware.gzip import GZipMiddleware
+
+import concurrent.futures
+
 
 # =========================
 # 環境変数
@@ -89,7 +93,7 @@ class MultimodalBody(BaseModel):
 # FastAPI
 # =========================
 app = FastAPI(title="Multimodal Truck/Train/Ship Router (FastAPI)")
-
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 # Startup event to create DB pool
 @app.on_event("startup")
