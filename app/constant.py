@@ -7,7 +7,7 @@ STREET_TYPE = {
     "TRUCK_TRAIN_SHIP_TRAIN": "TRUCK_TRAIN_SHIP_TRAIN",
 }
 
-FOLDER_DATA = "data_file/"
+FOLDER_DATA = "importer_data"
 
 VEHICLES = {
     'truck': 'Truck',
