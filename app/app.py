@@ -1,20 +1,16 @@
-import json
-import os
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import psycopg2
 import psycopg2.pool
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, confloat, conint
+from fastapi import FastAPI
+from pydantic import BaseModel, confloat
 from pydantic_settings import BaseSettings
-from shapely import LineString
-import geopandas as gpd
 from route_optimizer import RouteOptimizer
 from helper import process_ship_data, process_train_data
 from constant import *
-import globals
 from helper import create_response
 
+import concurrent.futures
 
 
 # =========================
@@ -206,17 +202,19 @@ def multimodal_route(payload: MultimodalBody):
     co2_list = []
     
     # Xử lý từng mode riêng biệt
-    for current_mode in mode:
+    def process_single_mode(current_mode):
         try:
             if current_mode.upper() not in STREET_TYPE:
-                all_results.append({
+                return {
                     'mode': current_mode,
                     'message': f'Mode {current_mode} not supported'
-                })
-                continue
+                }
+
+            # 🚨 QUAN TRỌNG: Tạo optimizer RIÊNG cho mỗi thread
+            thread_optimizer = RouteOptimizer(data_folder_path, db_config)
 
             # Tìm route cho từng mode
-            mode_results = optimizer.find_route(
+            mode_results = thread_optimizer.find_route(
                 origin_lat,
                 origin_lon,
                 destination_lat,
@@ -232,14 +230,13 @@ def multimodal_route(payload: MultimodalBody):
             )
 
             if 'isError' in mode_results and mode_results.get('isError'):
-                all_results.append({
+                return {
                     'mode': current_mode,
                     'message': mode_results.get('message')
-                })
+                }
             else:
-                # Lấy thông tin từ kết quả trả về thay vì global state
                 if 'routes' in mode_results and mode_results['routes']:
-                    route = mode_results['routes'][0]  # Lấy route đầu tiên
+                    route = mode_results['routes'][0]
                     
                     # Tạo geojson cho route này
                     single_route_result = {
@@ -252,51 +249,76 @@ def multimodal_route(payload: MultimodalBody):
                         "max_transfers": max_transfers,
                     }
                     
-                    geojson = optimizer._convert_to_geojson(single_route_result)
+                    geojson = thread_optimizer._convert_to_geojson(single_route_result)
                     
-                    # Lấy thông tin từ route thay vì global state
+                    # 🚨 SỬA: Lấy thông tin TỪ KẾT QUẢ, không từ global state trực tiếp
+                    global_info = mode_results.get("global_state_info", {})
+                    
                     route_info = {
                         'mode': current_mode,
-                        'departure_time': globals.GLOBAL_STATE["departure_time"],
-                        'arrival_time': globals.GLOBAL_STATE["arrival_time"],
-                        'total_time_minutes': globals.GLOBAL_STATE["total_time_minutes"],
-                        'total_move_time_minutes': globals.GLOBAL_STATE["total_move_time_minutes"],
-                        'total_distance_km': globals.GLOBAL_STATE["total_distance_km"],
-                        'total_co2_emissions_grams': globals.GLOBAL_STATE["total_co2_emissions_grams"],
-                        'message': route.get('warning_message', ''),
+                        'departure_time': global_info.get("departure_time", ""),
+                        'arrival_time': global_info.get("arrival_time", ""),
+                        'total_time_minutes': global_info.get("total_time_minutes", 0),
+                        'total_move_time_minutes': global_info.get("total_move_time_minutes", 0),
+                        'total_distance_km': global_info.get("total_distance_km", 0),
+                        'total_co2_emissions_grams': global_info.get("total_co2_emissions_grams", 0),
+                        'message': route.get('warning_message', ''), 
                         'geojson': geojson
                     }
-                    all_results.append(route_info)
-                    
-                    time_list.append(route_info["total_time_minutes"])
-                    distance_list.append(route_info["total_distance_km"])
-                    co2_list.append(route_info["total_co2_emissions_grams"])
-                    
-                    if all_results:
-                        min_time = min(time_list)
-                        min_distance = min(distance_list)
-                        min_co2 = min(co2_list)
-
-                        for r in all_results:
-                            r["minimum_time_flag"] = bool(r["total_time_minutes"] == min_time)
-                            r["minimum_distance_flag"] = bool(r["total_distance_km"] == min_distance)
-                            r["minimum_co2_flag"] = bool(r["total_co2_emissions_grams"] == min_co2)
-
+                    return route_info
                 else:
-                    all_results.append({
+                    return {
                         'mode': current_mode,
                         'message': 'No route found'
-                    })
+                    }
 
         except Exception as e:
-            all_results.append({
+            return {
                 'mode': current_mode,
                 'message': f'Error processing {current_mode}: {str(e)}'
-            })
+            }
+            
+    # Sử dụng ThreadPoolExecutor để chạy song song
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(mode)) as executor:
+        # Gửi tất cả các task vào thread pool
+        future_to_mode = {
+            executor.submit(process_single_mode, current_mode): current_mode 
+            for current_mode in mode
+        }
+        
+        # Thu thập kết quả khi hoàn thành
+        for future in concurrent.futures.as_completed(future_to_mode):
+            try:
+                result = future.result()
+                all_results.append(result)
+                
+                # Chỉ thêm vào list tính toán nếu kết quả hợp lệ
+                if 'total_time_minutes' in result:
+                    time_list.append(result["total_time_minutes"])
+                    distance_list.append(result["total_distance_km"])
+                    co2_list.append(result["total_co2_emissions_grams"])
+                    
+            except Exception as e:
+                current_mode = future_to_mode[future]
+                all_results.append({
+                    'mode': current_mode,
+                    'message': f'Thread execution failed: {str(e)}'
+                })
+
+    # Tính toán flags sau khi có tất cả kết quả
+    if all_results and time_list:
+        min_time = min(time_list)
+        min_distance = min(distance_list)
+        min_co2 = min(co2_list)
+
+        for r in all_results:
+            if 'total_time_minutes' in r:
+                r["minimum_time_flag"] = bool(r["total_time_minutes"] == min_time)
+                r["minimum_distance_flag"] = bool(r["total_distance_km"] == min_distance)
+                r["minimum_co2_flag"] = bool(r["total_co2_emissions_grams"] == min_co2)
 
     summary = create_response(origin_name, origin_lat, origin_lon, destination_name, destination_lat, destination_lon, all_results)
     return summary
-
 
 
 # 直接起動用
