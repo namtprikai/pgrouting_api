@@ -268,6 +268,8 @@ class RouteOptimizer:
         dest_lon: float,
         origin_name,
         destination_name,
+        find_station_radius_km,
+        find_port_radius_km,
         input_departure_hour: str,
         weight_tons: float = 10.0,
         mode: list = ["truck_only"],
@@ -315,8 +317,11 @@ class RouteOptimizer:
         dest_point = Point(dest_lon, dest_lat)
 
         # Find nearest ports and stations
-        nearest_ports = self._find_nearest_ports(origin_point, dest_point)
-        nearest_stations = self._find_nearest_stations(origin_point, dest_point)
+        # nearest_ports = self._find_nearest_ports(origin_point, dest_point)
+        # nearest_stations = self._find_nearest_stations(origin_point, dest_point)
+
+        nearest_ports = self._find_nearest_ports_by_radius(origin_point, dest_point, find_port_radius_km)
+        nearest_stations = self._find_nearest_stations_by_radius(origin_point, dest_point, find_station_radius_km)
 
         # Calculate routes for different transportation modes
         routes = await self._calculate_routes_by_mode(
@@ -387,10 +392,14 @@ class RouteOptimizer:
             distance_col="distance",
         )
 
+        print("NEAREST ORIGIN PORTS: ", origin_ports, "\n")
+        print("NEAREST DEST PORTS: ", dest_ports, "\n")
+
         return {
             "origin_port": origin_ports.iloc[0] if not origin_ports.empty else None,
             "dest_port": dest_ports.iloc[0] if not dest_ports.empty else None,
         }
+    
 
     def _find_nearest_stations(self, origin_point: Point, dest_point: Point) -> Dict:
         """Find nearest stations to origin and destination points"""
@@ -418,6 +427,90 @@ class RouteOptimizer:
             how="inner",
             distance_col="distance",
         )
+
+        return {
+            "origin_station": (
+                origin_stations.iloc[0] if not origin_stations.empty else None
+            ),
+            "dest_station": dest_stations.iloc[0] if not dest_stations.empty else None,
+        }
+    
+    def _find_nearest_ports_by_radius(self, origin_point: Point, dest_point: Point, radius: int) -> Dict:
+        """Find nearest ports to origin and destination points in a specific radius (default: 100km)"""
+        # Create temporary GeoDataFrame for origin and destination
+        temp_gdf = gpd.GeoDataFrame(
+            {"name": ["origin", "destination"]},
+            geometry=[origin_point, dest_point],
+            crs="EPSG:4326",
+        )
+
+        # Convert to projected CRS for accurate distance calculations
+        temp_gdf = temp_gdf.to_crs("EPSG:3857")  # Web Mercator
+        minato_gdf_projected = self.minato_gdf.to_crs("EPSG:3857")
+        
+        # Convert radius to max distance to find in meters
+        max_distance_meters = radius * 1000
+
+        # Find nearest ports
+        origin_ports = gpd.sjoin_nearest(
+            temp_gdf.iloc[[0]],
+            minato_gdf_projected,
+            how="inner",
+            max_distance=max_distance_meters,
+            distance_col="distance",
+        ).sort_values("distance")
+
+        dest_ports = gpd.sjoin_nearest(
+            temp_gdf.iloc[[1]],
+            minato_gdf_projected,
+            how="inner",
+            max_distance=max_distance_meters,
+            distance_col="distance",
+        ).sort_values("distance")
+
+        print("NEAREST ORIGIN PORTS: ", origin_ports, "\n")
+        print("NEAREST DEST PORTS: ", dest_ports, "\n")
+
+        return {
+            "origin_port": origin_ports.iloc[0] if not origin_ports.empty else None,
+            "dest_port": dest_ports.iloc[0] if not dest_ports.empty else None,
+        }
+    
+    def _find_nearest_stations_by_radius(self, origin_point: Point, dest_point: Point, radius: int) -> Dict:
+        """Find nearest stations to origin and destination points"""
+        # Create temporary GeoDataFrame for origin and destination
+        temp_gdf = gpd.GeoDataFrame(
+            {"name": ["origin", "destination"]},
+            geometry=[origin_point, dest_point],
+            crs="EPSG:4326",
+        )
+
+        # Convert to projected CRS for accurate distance calculations
+        temp_gdf = temp_gdf.to_crs("EPSG:3857")  # Web Mercator
+        station_gdf_projected = self.station_gdf.to_crs("EPSG:3857")
+
+        # Convert radius to max distance to find in meters
+        max_distance_meters = radius * 1000
+
+        # Find nearest stations
+        origin_stations = gpd.sjoin_nearest(
+            temp_gdf.iloc[[0]],
+            station_gdf_projected,
+            how="inner",
+            max_distance=max_distance_meters,
+            distance_col="distance",
+        ).sort_values("distance")
+
+        dest_stations = gpd.sjoin_nearest(
+            temp_gdf.iloc[[1]],
+            station_gdf_projected,
+            how="inner",
+            max_distance=max_distance_meters,
+            distance_col="distance",
+        ).sort_values("distance")
+
+        print("NEAREST ORIGIN STATIONS: ", origin_stations, "\n")
+        print("NEAREST DEST STATIONS: ", dest_stations, "\n")
 
         return {
             "origin_station": (
@@ -546,8 +639,10 @@ class RouteOptimizer:
                         else:
                             return {'isError': True, 'data': [], 'message': MESSAGES['ship_route_not_found']}
                     else:
-                        return {'isError': True, 'data': [], 'message': 'Truck route not found'}
-
+                        return {'isError': True, 'data': [], 'message': MESSAGES['truck_route_not_found']}
+                else:
+                    return {'isError': True, 'data': [], 'message': MESSAGES['nearest_ports_or_stations_not_found']}
+            
             # Route 3: Truck + Train
             if mode == "truck_train":
                 if (nearest_stations['origin_station'] is not None and 
@@ -570,6 +665,12 @@ class RouteOptimizer:
                                 truck_routes, train_routes, nearest_stations, weight_tons
                             )
                             routes.extend(combined_routes)
+                    else:
+                        return {'isError': True, 'data': [], 'message': MESSAGES['train_route_not_found']}
+                else:
+                    return {'isError': True, 'data': [], 'message': MESSAGES['truck_route_not_found']}
+            else:
+                return {'isError': True, 'data': [], 'message': MESSAGES['nearest_ports_or_stations_not_found']}
 
         # Route 4: Truck + Ship + Train
         if mode == "truck_ship_train":

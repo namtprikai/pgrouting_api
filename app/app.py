@@ -83,8 +83,8 @@ class MultimodalBody(BaseModel):
     destination_lon: confloat(ge=-180, le=180)
     max_transfers: int = 1
     show_all: bool = True
-    find_station_radius_km: int
-    find_port_radius_km: int
+    find_station_radius_km: int = 100
+    find_port_radius_km: int = 100
     departure_hour: int
     weight_tons: float
 
@@ -153,17 +153,20 @@ async def get_route_map():
 # API endpoint for multimodal route search
 @app.post("/api/search-route")
 async def multimodal_route(payload: MultimodalBody):
-    """Find multimodal routes (fully async version)"""
-    # Input validation and processing
+    # 基本パラメータ
     origin_name = payload.origin_name if payload.origin_name is not None else None
     origin_lat = float(payload.origin_lat) if payload.origin_lat is not None else None
     origin_lon = float(payload.origin_lon) if payload.origin_lon is not None else None
     destination_name = payload.destination_name if payload.destination_name is not None else None
     destination_lat = float(payload.destination_lat) if payload.destination_lat is not None else None
     destination_lon = float(payload.destination_lon) if payload.destination_lon is not None else None
-    mode = [m.lower() for m in payload.mode]
+    find_station_radius_km = payload.find_station_radius_km if payload.find_station_radius_km is not None else 100
+    find_port_radius_km = payload.find_port_radius_km if payload.find_port_radius_km is not None else 100
+    mode = payload.mode[0].lower() if payload.mode is not None else STREET_TYPE["TRUCK_ONLY"].lower()
     weight_tons = payload.weight_tons if payload.weight_tons is not None else 1
-    max_transfers = payload.max_transfers if payload.max_transfers is not None else 1
+    max_transfers = (
+        payload.max_transfers if payload.max_transfers is not None else 1
+    )
     show_all = payload.show_all if payload.show_all is not None else True
 
     # Validate departure hour
@@ -213,6 +216,8 @@ async def multimodal_route(payload: MultimodalBody):
                 destination_lon,
                 origin_name,
                 destination_name,
+            find_station_radius_km,
+            find_port_radius_km,
                 departure_hour,
                 weight_tons,
                 [current_mode],
