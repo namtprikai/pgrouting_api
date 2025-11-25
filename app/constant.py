@@ -20,8 +20,9 @@ SHIP_SPEED_DEFAULT = 50
 MESSAGES = {
     'no_time_data': "時刻表データがないため、簡易試算となります",
     'ship_route_not_found': "起点・終点の近隣の港を結ぶ経路が見つかりません",
-    "truck_route_not_found": "{origin}と{destination}を結ぶトラックルートが見つかりませんでした。",
-    "train_route_not_found": "{origin}と{destination}を結ぶ鉄道ルートが見つかりませんでした。",
+    "truck_route_not_found": "起点・終点の近くにあるトラックルートが見つかりません",
+    "train_route_not_found": "起点・終点の近隣の駅を結ぶ経路が見つかりません",
+    "nearest_ports_or_stations_not_found": "起点・終点の近隣の港・駅を結ぶ経路が見つかりません", 
 }
 
 OUTPUT_FOLDER = "output/"

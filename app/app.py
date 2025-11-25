@@ -113,8 +113,8 @@ class MultimodalBody(BaseModel):
     destination_lon: confloat(ge=-180, le=180)
     max_transfers: int = 1
     show_all: bool = True
-    find_station_radius_km: int
-    find_port_radius_km: int
+    find_station_radius_km: int = 100
+    find_port_radius_km: int = 100
     departure_hour: int
     weight_tons: float
 
@@ -178,6 +178,8 @@ def multimodal_route(payload: MultimodalBody):
         destination_name = payload.destination_name if payload.destination_name is not None else None
         destination_lat = float(payload.destination_lat) if payload.destination_lat is not None else None
         destination_lon = float(payload.destination_lon) if payload.destination_lon is not None else None
+        find_station_radius_km = payload.find_station_radius_km if payload.find_station_radius_km is not None else 100
+        find_port_radius_km = payload.find_port_radius_km if payload.find_port_radius_km is not None else 100
         mode = payload.mode[0].lower() if payload.mode is not None else STREET_TYPE["TRUCK_ONLY"].lower()
         weight_tons = payload.weight_tons if payload.weight_tons is not None else 1
         max_transfers = (
@@ -215,6 +217,8 @@ def multimodal_route(payload: MultimodalBody):
             destination_lon,
             origin_name,
             destination_name,
+            find_station_radius_km,
+            find_port_radius_km,
             departure_hour,
             weight_tons,
             mode,
