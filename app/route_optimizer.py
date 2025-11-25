@@ -26,6 +26,7 @@ from helper import (
     calc_wait_minutes,
     reset_global_states
 )
+from decoratorr import timeit
 
 try:
     import psycopg2
@@ -4028,6 +4029,7 @@ class RouteOptimizer:
             sql = "SELECT component FROM jpn_components WHERE node IN (%s, %s)"
             return self._db_query_all(sql, (start_node, end_node))
 
+    @timeit("_route_truck_mm")
     def _route_truck_mm(
         self,
         o_lon: float,
@@ -4038,7 +4040,7 @@ class RouteOptimizer:
     ) -> Optional[Dict]:
         """Compute truck route in Python, equivalent to original SQL function."""
 
-        # 1️⃣ Cache key
+        # 1 Cache key
         cache_key = (
             round(o_lon, 6),
             round(o_lat, 6),
@@ -4049,7 +4051,7 @@ class RouteOptimizer:
         if cache_key in self._route_cache:
             return self._route_cache[cache_key]
 
-        # 2️⃣ Find nearest nodes
+        # 2️ Find nearest nodes
         src_node = self._db_query_one("SELECT nearest_node_id(%s, %s) as nid", (o_lon, o_lat))
         dst_node = self._db_query_one("SELECT nearest_node_id(%s, %s) as nid", (d_lon, d_lat))
         if not src_node or not dst_node or src_node["nid"] is None or dst_node["nid"] is None:
@@ -4057,7 +4059,7 @@ class RouteOptimizer:
         src_id = src_node["nid"]
         dst_id = dst_node["nid"]
 
-        # 3️⃣ Base query với spatial filter
+        # 3 Base query với spatial filter
         base_query = """
         SELECT gid AS id, source, target, cost_s AS cost, reverse_cost,
             ST_X(ST_StartPoint(geom)) AS x1, ST_Y(ST_StartPoint(geom)) AS y1,
@@ -4068,7 +4070,7 @@ class RouteOptimizer:
         AND geom && ST_Expand(ST_MakeEnvelope(%s, %s, %s, %s, 4326), %s)
         """
 
-        # 4️⃣ Get route edges using pgr_bdAstar
+        # 4 Get route edges using pgr_bdAstar
         buffer_degree = 0.3
         min_lon = min(o_lon, d_lon) - buffer_degree
         max_lon = max(o_lon, d_lon) + buffer_degree
@@ -4098,7 +4100,7 @@ class RouteOptimizer:
         if not route_edges:
             return None
 
-        # 5️⃣ Get detailed edge info với reverse_cost giống SQL function
+        # 5 Get detailed edge info với reverse_cost giống SQL function
         edge_ids = [str(r["edge"]) for r in route_edges]
         if not edge_ids:
             return None
@@ -4123,7 +4125,7 @@ class RouteOptimizer:
         if not edges_detail:
             return None
 
-        # 6️⃣ Merge geometry và tính metrics
+        # 6 Merge geometry và tính metrics
         geoms = [e["geom"] for e in edges_detail]
         merged_geom = self._db_query_one(
             "SELECT ST_AsGeoJSON(ST_LineMerge(ST_Union(geom))) AS gj FROM unnest(%s::geometry[]) AS geom",
@@ -4167,7 +4169,7 @@ class RouteOptimizer:
 
         toll_estimate_yen = round(motorway_km * toll_per_km)
 
-        # 7️⃣ Entry/Exit IC - chỉ lấy edges có trong route
+        # 7 Entry/Exit IC - chỉ lấy edges có trong route
         motorway_edges_in_route = []
         for edge_detail in edges_detail:
             if edge_detail["highway"] in ("motorway", "motorway_link"):
@@ -4192,7 +4194,7 @@ class RouteOptimizer:
                     (exit_point["pt"],)
                 )
 
-        # 8️⃣ Build result
+        # 8 Build result
         route = {
             "geometry": json.loads(merged_geom["gj"]),
             "distance_km": distance_km,
