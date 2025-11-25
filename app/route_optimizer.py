@@ -451,29 +451,73 @@ class RouteOptimizer:
         # Convert radius to max distance to find in meters
         max_distance_meters = radius * 1000
 
-        # Find nearest ports
-        origin_ports = gpd.sjoin_nearest(
-            temp_gdf.iloc[[0]],
-            minato_gdf_projected,
-            how="inner",
-            max_distance=max_distance_meters,
-            distance_col="distance",
-        ).sort_values("distance")
+        # Find all ports within radius
+        origin_point_proj = temp_gdf.iloc[0].geometry
+        dest_point_proj = temp_gdf.iloc[1].geometry
 
-        dest_ports = gpd.sjoin_nearest(
-            temp_gdf.iloc[[1]],
-            minato_gdf_projected,
-            how="inner",
-            max_distance=max_distance_meters,
-            distance_col="distance",
-        ).sort_values("distance")
+        # Origin ports
+        origin_ports = minato_gdf_projected.copy()
+        origin_ports["distance"] = origin_ports.geometry.distance(origin_point_proj)
+
+        origin_ports = origin_ports[
+            origin_ports["distance"] <= max_distance_meters
+        ].sort_values("distance")
+
+        # Dest ports
+        dest_ports = minato_gdf_projected.copy()
+        dest_ports["distance"] = dest_ports.geometry.distance(dest_point_proj)
+
+        dest_ports = dest_ports[
+            dest_ports["distance"] <= max_distance_meters
+        ].sort_values("distance")
+
+        # Check each pair of origin-dest ports to see if they has direct ship route, if not, return default (first element of sorted list)
+        default_origin_port = origin_ports.iloc[0] if not origin_ports.empty else None
+        default_dest_port = dest_ports.iloc[0] if not dest_ports.empty else None
 
         print("NEAREST ORIGIN PORTS: ", origin_ports, "\n")
         print("NEAREST DEST PORTS: ", dest_ports, "\n")
+        
+        if origin_ports.empty or dest_ports.empty:
+            return {
+                "origin_port": default_origin_port,
+                "dest_port": default_dest_port,
+            }
+        
+        best_origin_row = None
+        best_dest_row = None
+        best_time = None
+
+        for _, o_row in origin_ports.iterrows():
+            origin_name = o_row["C02_005"]
+
+            for _, d_row in dest_ports.iterrows():
+                dest_name = d_row["C02_005"]
+                available, data = self._is_direct_ship_route_available(origin_port=origin_name, dest_port=dest_name)
+
+                if not available or not data:
+                    continue
+                
+                route_time = data.get("time")
+                if route_time is None:
+                    continue
+
+                if best_time is None or route_time < best_time:
+                    best_time = route_time
+                    best_origin_row = o_row
+                    best_dest_row = d_row
+                    
+
+        if best_origin_row is not None and best_dest_row is not None:
+            chosen_origin = best_origin_row
+            chosen_dest = best_dest_row
+        else:
+            chosen_origin = default_origin_port
+            chosen_dest = default_dest_port
 
         return {
-            "origin_port": origin_ports.iloc[0] if not origin_ports.empty else None,
-            "dest_port": dest_ports.iloc[0] if not dest_ports.empty else None,
+            "origin_port": chosen_origin,
+            "dest_port": chosen_dest,
         }
     
     def _find_nearest_stations_by_radius(self, origin_point: Point, dest_point: Point, radius: int) -> Dict:
@@ -492,31 +536,73 @@ class RouteOptimizer:
         # Convert radius to max distance to find in meters
         max_distance_meters = radius * 1000
 
-        # Find nearest stations
-        origin_stations = gpd.sjoin_nearest(
-            temp_gdf.iloc[[0]],
-            station_gdf_projected,
-            how="inner",
-            max_distance=max_distance_meters,
-            distance_col="distance",
-        ).sort_values("distance")
+        # Find all stations within radius
+        origin_point_proj = temp_gdf.iloc[0].geometry
+        dest_point_proj = temp_gdf.iloc[1].geometry
 
-        dest_stations = gpd.sjoin_nearest(
-            temp_gdf.iloc[[1]],
-            station_gdf_projected,
-            how="inner",
-            max_distance=max_distance_meters,
-            distance_col="distance",
-        ).sort_values("distance")
+        # Origin stations
+        origin_stations = station_gdf_projected.copy()
+        origin_stations["distance"] = origin_stations.geometry.distance(origin_point_proj)
 
+        origin_stations = origin_stations[
+            origin_stations["distance"] <= max_distance_meters
+        ].sort_values("distance")
+
+        # Dest stations
+        dest_stations = station_gdf_projected.copy()
+        dest_stations["distance"] = dest_stations.geometry.distance(dest_point_proj)
+
+        dest_stations = dest_stations[
+            dest_stations["distance"] <= max_distance_meters
+        ].sort_values("distance")
+
+        # Check each pair of origin-dest ports to see if they has direct train route, if not, return default (first element of sorted list)
+        default_origin_station = origin_stations.iloc[0] if not origin_stations.empty else None
+        default_dest_station = dest_stations.iloc[0] if not dest_stations.empty else None
+
+        
+        if origin_stations.empty or dest_stations.empty:
+            return {
+                "origin_station": default_origin_station,
+                "dest_station": default_dest_station,
+            }
+        
+        best_origin_row = None
+        best_dest_row = None
+        best_time = None
+
+        for _, o_row in origin_stations.iterrows():
+            origin_name = o_row["Station_Name"]
+
+            for _, d_row in dest_stations.iterrows():
+                dest_name = d_row["Station_Name"]
+                available, data = self._is_direct_train_route_available(origin_station_name=origin_name, dest_station_name=dest_name)
+
+                if not available or not data:
+                    continue
+                
+                route_time = data.get("time")
+                if route_time is None:
+                    continue
+
+                if best_time is None or route_time < best_time:
+                    best_time = route_time
+                    best_origin_row = o_row
+                    best_dest_row = d_row
+                    
         print("NEAREST ORIGIN STATIONS: ", origin_stations, "\n")
         print("NEAREST DEST STATIONS: ", dest_stations, "\n")
+        
+        if best_origin_row is not None and best_dest_row is not None:
+            chosen_origin = best_origin_row
+            chosen_dest = best_dest_row
+        else:
+            chosen_origin = default_origin_station
+            chosen_dest = default_dest_station
 
         return {
-            "origin_station": (
-                origin_stations.iloc[0] if not origin_stations.empty else None
-            ),
-            "dest_station": dest_stations.iloc[0] if not dest_stations.empty else None,
+            "origin_station": chosen_origin,
+            "dest_station": chosen_dest,
         }
 
     async def _nearest_station(self, lon: float, lat: float):
@@ -3386,37 +3472,106 @@ class RouteOptimizer:
             )
         ]
 
-        if not route.empty:
-            ship_data = find_ship_by_departure_time(route, globals.GLOBAL_STATE['arrival_time_buffer_wait_time'])
+        if route.empty:
+            return None
 
-            route_time = ship_data["Route_Time"].iloc[0] if ship_data["Route_Time"].iloc[0] else None
-            departure_time = ship_data["Departure_Time"].iloc[0] if ship_data["Departure_Time"].iloc[0] else add_hours(globals.GLOBAL_STATE["arrival_time_previous_route"])
-            arrival_time = ship_data["Arrival_Time"].iloc[0] if ship_data["Arrival_Time"].iloc[0] else None
-            speed_upper = ship_data["Speed_Upper_(km/h)"].iloc[0] if ship_data["Speed_Upper_(km/h)"].iloc[0] else SHIP_SPEED_DEFAULT
+        ship_data = find_ship_by_departure_time(route, globals.GLOBAL_STATE['arrival_time_buffer_wait_time'])
+        
+        if (
+            ship_data is None
+            or isinstance(ship_data, list)
+            or not isinstance(ship_data, pd.DataFrame)
+            or ship_data.empty
+        ):
+            return None
+        
+        route_time = ship_data["Route_Time"].iloc[0] if ship_data["Route_Time"].iloc[0] else None
+        departure_time = ship_data["Departure_Time"].iloc[0] if ship_data["Departure_Time"].iloc[0] else add_hours(globals.GLOBAL_STATE["arrival_time_previous_route"])
+        arrival_time = ship_data["Arrival_Time"].iloc[0] if ship_data["Arrival_Time"].iloc[0] else None
+        speed_upper = ship_data["Speed_Upper_(km/h)"].iloc[0] if ship_data["Speed_Upper_(km/h)"].iloc[0] else SHIP_SPEED_DEFAULT
 
-            # Calculate distance between ports
-            origin_port_data = self.minato_gdf[
-                self.minato_gdf["C02_005"] == origin_port
-            ]
-            dest_port_data = self.minato_gdf[self.minato_gdf["C02_005"] == dest_port]
+        # Calculate distance between ports
+        origin_port_data = self.minato_gdf[
+            self.minato_gdf["C02_005"] == origin_port
+        ]
+        dest_port_data = self.minato_gdf[self.minato_gdf["C02_005"] == dest_port]
 
-            if not origin_port_data.empty and not dest_port_data.empty:
-                distance = self._calculate_distance(
-                    origin_port_data["Y"].iloc[0],
-                    origin_port_data["X"].iloc[0],
-                    dest_port_data["Y"].iloc[0],
-                    dest_port_data["X"].iloc[0],
-                )
+        if not origin_port_data.empty and not dest_port_data.empty:
+            distance = self._calculate_distance(
+                origin_port_data["Y"].iloc[0],
+                origin_port_data["X"].iloc[0],
+                dest_port_data["Y"].iloc[0],
+                dest_port_data["X"].iloc[0],
+            )
 
-                if not route_time or not arrival_time or not ship_data["Departure_Time"].iloc[0] or not ship_data["Speed_Upper_(km/h)"].iloc[0]:
-                    route_time = (distance / 1000) * 1.5 / speed_upper
-                    arrival_time = add_hours(departure_time, route_time)
-                    globals.GLOBAL_STATE["warning_message"] = MESSAGES['no_time_data']
+            if not route_time or not arrival_time or not ship_data["Departure_Time"].iloc[0] or not ship_data["Speed_Upper_(km/h)"].iloc[0]:
+                route_time = (distance / 1000) * 1.5 / speed_upper
+                arrival_time = add_hours(departure_time, route_time)
+                globals.GLOBAL_STATE["warning_message"] = MESSAGES['no_time_data']
 
-                return {"time": route_time, "distance": distance * 1.5, 'departure_time': departure_time, 'arrival_time': arrival_time}
+            return {"time": route_time, "distance": distance * 1.5, 'departure_time': departure_time, 'arrival_time': arrival_time}
 
-        return None
 
+    def _is_direct_ship_route_available(self, origin_port: str, dest_port: str):
+        """Check if ship route is available or not"""
+        route = self.ferry_time[
+            (
+                self.ferry_time[
+                    "Departure_Location_(National_Land_Numerical_Information_Format)"
+                ]
+                == origin_port
+            )
+            & (
+                self.ferry_time[
+                    "Arrival_Location_(National_Land_Numerical_Information_Format)"
+                ]
+                == dest_port
+            )
+        ]
+
+        if route.empty:
+            return False, None
+        
+        ship_data = find_ship_by_departure_time(route, globals.GLOBAL_STATE['arrival_time_buffer_wait_time'])
+
+        if (
+            ship_data is None
+            or isinstance(ship_data, list)
+            or not isinstance(ship_data, pd.DataFrame)
+            or ship_data.empty
+        ):
+            return False, None
+    
+        route_time = ship_data["Route_Time"].iloc[0] if ship_data["Route_Time"].iloc[0] else None
+        departure_time = ship_data["Departure_Time"].iloc[0] if ship_data["Departure_Time"].iloc[0] else add_hours(globals.GLOBAL_STATE["arrival_time_previous_route"])
+        arrival_time = ship_data["Arrival_Time"].iloc[0] if ship_data["Arrival_Time"].iloc[0] else None
+        speed_upper = ship_data["Speed_Upper_(km/h)"].iloc[0] if ship_data["Speed_Upper_(km/h)"].iloc[0] else SHIP_SPEED_DEFAULT
+
+        # Calculate distance between ports
+        origin_port_data = self.minato_gdf[
+            self.minato_gdf["C02_005"] == origin_port
+        ]
+        dest_port_data = self.minato_gdf[self.minato_gdf["C02_005"] == dest_port]
+
+        if not origin_port_data.empty and not dest_port_data.empty:
+            distance = self._calculate_distance(
+                origin_port_data["Y"].iloc[0],
+                origin_port_data["X"].iloc[0],
+                dest_port_data["Y"].iloc[0],
+                dest_port_data["X"].iloc[0],
+            )
+
+            if not route_time or not arrival_time or not ship_data["Departure_Time"].iloc[0] or not ship_data["Speed_Upper_(km/h)"].iloc[0]:
+                route_time = (distance / 1000) * 1.5 / speed_upper
+                arrival_time = add_hours(departure_time, route_time)
+                globals.GLOBAL_STATE["warning_message"] = MESSAGES['no_time_data']
+
+            data = {
+                "time": route_time,
+                "distance": distance * 1.5,  
+            }
+            return True, data
+    
     def _get_train_route_info_test(
         self, origin_station_name: str, dest_station_name: str
     ) -> Optional[Dict]:
@@ -3978,6 +4133,56 @@ class RouteOptimizer:
             return {"time": time_minutes, "distance": distance_km * 1000, 'departure_time': departure_time, 'arrival_time': arrival_time}
 
         return None
+
+    def _is_direct_train_route_available(
+        self,
+        origin_station_name: str,
+        dest_station_name: str,
+    ):
+        if self.train_time is None:
+            return False, None
+
+        route = self.train_time[
+            (self.train_time["Departure_Station_Name"] == origin_station_name)
+            & (self.train_time["Arrival_Station_Name"] == dest_station_name)
+        ]
+
+        if route.empty:
+            return False, None
+
+        try:
+            train_data = find_train_by_departure_time(
+                route,
+                globals.GLOBAL_STATE["arrival_time_buffer_wait_time"],
+            )
+        except Exception as e:
+            print("Error find_train_by_departure_time:", e)
+            return False, None
+
+        if (
+            train_data is None
+            or isinstance(train_data, list)
+            or not isinstance(train_data, pd.DataFrame)
+            or train_data.empty
+        ):
+            return False, None
+
+        duration = route["train_Duration2"].iloc[0]
+        if hasattr(duration, "total_seconds"):
+            time_minutes = duration.total_seconds() / 60
+        else:
+            time_minutes = 0
+
+        distance_km = time_minutes * 50
+        distance_m = distance_km * 1000
+        
+        data = {
+            "time": time_minutes,
+            "distance": distance_m,
+        }
+
+        return True, data
+
 
     async def _find_single_ship_route_with_transfer(
         self,
