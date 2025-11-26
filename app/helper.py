@@ -657,3 +657,4 @@ def reset_global_states():
         "arrival_time_previous_route": 0,
         "warning_message": ""
     }
+    

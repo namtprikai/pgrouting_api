@@ -8,7 +8,6 @@ from route_optimizer import RouteOptimizer
 from helper import process_ship_data, process_train_data
 from constant import *
 from helper import create_response
-import concurrent.futures
 
 
 # =========================
@@ -66,40 +65,6 @@ class Database:
 # Global database instance
 db = Database()
 
-thread_pool = concurrent.futures.ThreadPoolExecutor(
-    max_workers=3,
-    thread_name_prefix="route_worker"
-)
-
-
-async def sql_one(query: str, *params) -> Optional[Dict[str, Any]]:
-    """Execute query and return single row"""
-    if not db.pool:
-        await db.create_pool()
-    
-    async with db.pool.acquire() as conn:
-        try:
-            row = await conn.fetchrow(query, *params)
-            if not row:
-                return None
-            return dict(row)
-        except Exception as e:
-            print(f"Database error in sql_one: {e}")
-            return None
-
-async def sql_all(query: str, *params) -> List[Dict[str, Any]]:
-    """Execute query and return all rows"""
-    if not db.pool:
-        await db.create_pool()
-    
-    async with db.pool.acquire() as conn:
-        try:
-            rows = await conn.fetch(query, *params)
-            return [dict(row) for row in rows]
-        except Exception as e:
-            print(f"Database error in sql_all: {e}")
-            return []
-
 
 # =========================
 # 入出力スキーマ
@@ -149,43 +114,35 @@ async def get_route_map():
         "password": settings.PGPASSWORD,
     }
 
-    # Run synchronous RouteOptimizer in thread pool
-    def load_route_data():
-        optimizer = RouteOptimizer(data_folder_path, db_config)
+    # Create RouteOptimizer instance
+    optimizer = RouteOptimizer(data_folder_path, db_config)
+    
+    # Load ship data
+    optimizer._load_ferry_schedule()
+    optimizer._load_port_data()
 
-        # Load ship data
-        optimizer._load_ferry_schedule()
-        optimizer._load_port_data()
+    # Load train data
+    optimizer._load_station_data()
+    optimizer._load_train_schedule()
 
-        # Load train data
-        optimizer._load_station_data()
-        optimizer._load_train_schedule()
+    # Process Ship data
+    ship_schedule = optimizer.ferry_time
+    ship_ports = optimizer.minato_gdf
+    ship_data = process_ship_data(schedules_data=ship_schedule, ports_data=ship_ports)
 
-        # Process Ship data
-        ship_schedule = optimizer.ferry_time
-        ship_ports = optimizer.minato_gdf
-        ship_data = process_ship_data(schedules_data=ship_schedule, ports_data=ship_ports)
-
-        # Process Train data
-        train_stations = optimizer.station_gdf
-        train_schedules = optimizer.train_time
-        train_data = process_train_data(
-            stations_data=train_stations, schedules_data=train_schedules
-        )
-
-        return {"ship_routes": ship_data, "train_routes": train_data}
-
-    # Execute synchronous code in thread pool
-    combined_data = await asyncio.get_event_loop().run_in_executor(
-        None, load_route_data
+    # Process Train data
+    train_stations = optimizer.station_gdf
+    train_schedules = optimizer.train_time
+    train_data = process_train_data(
+        stations_data=train_stations, schedules_data=train_schedules
     )
 
-    return combined_data
+    return {"ship_routes": ship_data, "train_routes": train_data}
 
 
 @app.post("/api/search-route")
 async def multimodal_route(payload: MultimodalBody):
-    """Find multimodal routes (async version)"""
+    """Find multimodal routes (fully async version)"""
     # Input validation and processing
     origin_name = payload.origin_name if payload.origin_name is not None else None
     origin_lat = float(payload.origin_lat) if payload.origin_lat is not None else None
@@ -231,47 +188,31 @@ async def multimodal_route(payload: MultimodalBody):
                     'message': f'Mode {current_mode} not supported'
                 }
 
-            # Run synchronous RouteOptimizer in thread pool
-            def find_route_sync():
-                thread_optimizer = RouteOptimizer(data_folder_path, db_config)
-                
-                mode_results = thread_optimizer.find_route(
-                    origin_lat,
-                    origin_lon,
-                    destination_lat,
-                    destination_lon,
-                    origin_name,
-                    destination_name,
-                    departure_hour,
-                    weight_tons,
-                    [current_mode],
-                    enable_transfer=True,
-                    max_transfers=max_transfers,
-                    show_all=show_all,
-                )
-                
-                # Convert to GeoJSON if route found
-                if 'isError' not in mode_results or not mode_results.get('isError'):
-                    if 'routes' in mode_results and mode_results['routes']:
-                        route = mode_results['routes'][0]
-                        single_route_result = {
-                            "origin": mode_results.get("origin", {}),
-                            "destination": mode_results.get("destination", {}),
-                            "weight_tons": mode_results.get("weight_tons", 10.0),
-                            "routes": [route],
-                            "mode": [current_mode],
-                            "enable_transfer": True,
-                            "max_transfers": max_transfers,
-                        }
-                        geojson = thread_optimizer._convert_to_geojson(single_route_result)
-                        mode_results['geojson'] = geojson
-                
-                return mode_results
-
-            # Execute synchronous route finding in thread pool
-            mode_results = await asyncio.get_event_loop().run_in_executor(
-                thread_pool, find_route_sync
+            # Create RouteOptimizer instance for this mode
+            optimizer = RouteOptimizer(data_folder_path, db_config)
+            
+            # Initialize database connection
+            await optimizer._init_database()
+            
+            # Find route using async method
+            mode_results = await optimizer.find_route(
+                origin_lat,
+                origin_lon,
+                destination_lat,
+                destination_lon,
+                origin_name,
+                destination_name,
+                departure_hour,
+                weight_tons,
+                [current_mode],
+                enable_transfer=True,
+                max_transfers=max_transfers,
+                show_all=show_all,
             )
+            
+            # Clean up database connection
+            if optimizer.db_pool:
+                await optimizer.db_pool.close()
 
             if 'isError' in mode_results and mode_results.get('isError'):
                 return {
@@ -283,6 +224,18 @@ async def multimodal_route(payload: MultimodalBody):
                     route = mode_results['routes'][0]
                     global_info = mode_results.get("global_state_info", {})
                     
+                    # Convert to GeoJSON if route found
+                    single_route_result = {
+                        "origin": mode_results.get("origin", {}),
+                        "destination": mode_results.get("destination", {}),
+                        "weight_tons": mode_results.get("weight_tons", 10.0),
+                        "routes": [route],
+                        "mode": [current_mode],
+                        "enable_transfer": True,
+                        "max_transfers": max_transfers,
+                    }
+                    geojson = optimizer._convert_to_geojson(single_route_result)
+                    
                     route_info = {
                         'mode': current_mode,
                         'departure_time': global_info.get("departure_time", ""),
@@ -292,7 +245,7 @@ async def multimodal_route(payload: MultimodalBody):
                         'total_distance_km': global_info.get("total_distance_km", 0),
                         'total_co2_emissions_grams': global_info.get("total_co2_emissions_grams", 0),
                         'message': route.get('warning_message', ''), 
-                        'geojson': mode_results.get('geojson', {})
+                        'geojson': geojson
                     }
                     return route_info
                 else:
@@ -302,6 +255,7 @@ async def multimodal_route(payload: MultimodalBody):
                     }
 
         except Exception as e:
+            print(f"Error processing {current_mode}: {str(e)}")
             return {
                 'mode': current_mode,
                 'message': f'Error processing {current_mode}: {str(e)}'
@@ -363,14 +317,50 @@ async def health_check():
         return {"status": "unhealthy", "error": str(e)}
 
 
-import threading
-
-@app.get("/thread-info")
-async def thread_info():
-    return {
-        "total_threads": threading.active_count(),
-        "thread_names": [t.name for t in threading.enumerate()]
-    }
+# Test endpoint để debug route finding
+@app.post("/api/test-route")
+async def test_route():
+    """Test route finding with debug information"""
+    try:
+        data_folder_path = FOLDER_DATA
+        db_config = {
+            "host": settings.PGHOST,
+            "port": settings.PGPORT,
+            "database": settings.PGDATABASE,
+            "user": settings.PGUSER,
+            "password": settings.PGPASSWORD,
+        }
+        
+        # Create RouteOptimizer instance
+        optimizer = RouteOptimizer(data_folder_path, db_config)
+        
+        # Initialize database connection
+        await optimizer._init_database()
+        
+        # Test coordinates (Tokyo to Osaka)
+        origin_lat, origin_lon = 35.6895, 139.6917  # Tokyo
+        dest_lat, dest_lon = 34.6937, 135.5023  # Osaka
+        
+        result = await optimizer.find_route(
+            origin_lat, origin_lon,
+            dest_lat, dest_lon,
+            "Tokyo", "Osaka",
+            8,  # departure_hour
+            10.0,  # weight_tons
+            ["truck_only"],  # mode
+            enable_transfer=True,
+            max_transfers=1,
+            show_all=True
+        )
+        
+        # Clean up
+        if optimizer.db_pool:
+            await optimizer.db_pool.close()
+            
+        return result
+        
+    except Exception as e:
+        return {"error": f"Test failed: {str(e)}"}
 
 # 直接起動用
 if __name__ == "__main__":
