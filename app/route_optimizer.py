@@ -5,7 +5,7 @@ Optimizes multimodal transportation routes (truck, train, ship)
 
 import geopandas as gpd
 import pandas as pd
-from shapely.geometry import Point, LineString, mapping
+from shapely.geometry import Point, LineString
 from datetime import timedelta, datetime
 import pyproj
 from typing import Dict, List, Optional, Tuple
@@ -26,6 +26,7 @@ from helper import (
     calc_wait_minutes,
     reset_global_states
 )
+from decoratorr import timeit
 
 try:
     import psycopg2
@@ -81,6 +82,9 @@ class RouteOptimizer:
 
         # Load all data
         self._load_all_data()
+        
+        self._node_cache = {}
+        self._route_cache = {}
 
     def _load_all_data(self):
         """Load all required data"""
@@ -128,7 +132,7 @@ class RouteOptimizer:
 
     def _load_station_data(self):
         """Load freight station data"""
-        station = pd.read_excel(f"{self.data_folder_path}/貨物駅_位置情報.xlsx")
+        station = pd.read_csv(f"{self.data_folder_path}/貨物駅_位置情報.csv")
         self.station_gdf = gpd.GeoDataFrame(
             station, geometry=gpd.points_from_xy(station["lon"], station["lat"])
         )
@@ -159,7 +163,7 @@ class RouteOptimizer:
 
     def _load_train_schedule(self):
         """Load train schedule"""
-        self.train_time = pd.read_excel(f"{self.data_folder_path}/貨物駅_時刻表.xlsx")
+        self.train_time = pd.read_csv(f"{self.data_folder_path}/貨物駅_時刻表.csv")
 
         # Replace arrival date
         self.train_time["Arrival_Date_Before"] = self.train_time["Arrival_Date"]
@@ -266,7 +270,7 @@ class RouteOptimizer:
         destination_name,
         input_departure_hour: str,
         weight_tons: float = 10.0,
-        mode: str = "all",
+        mode: list = ["truck_only"],
         enable_transfer: bool = False,
         max_transfers: int = 10,
         show_all: bool = False,
@@ -302,8 +306,9 @@ class RouteOptimizer:
             "truck_train_ship",
             "truck_train_ship_train",
         ]
-        if mode not in valid_modes:
-            raise ValueError(f"Invalid mode '{mode}'. Must be one of: {valid_modes}")
+        for m in mode:
+            if m not in valid_modes:
+                raise ValueError(f"Invalid mode '{m}'. Must be one of: {valid_modes}")
 
         # Create origin and destination points
         origin_point = Point(origin_lon, origin_lat)
@@ -337,14 +342,25 @@ class RouteOptimizer:
         else:
             # Find optimal routes
             optimal_routes = self._find_optimal_routes(routes)
-
-            return {
+            
+            # 🚨 THÊM: Trả về thông tin từ global state
+            result = {
                 "origin": {"lat": origin_lat, "lon": origin_lon},
                 "destination": {"lat": dest_lat, "lon": dest_lon},
                 "weight_tons": 0,
                 "routes": routes,
                 "optimal_routes": optimal_routes,
+                # THÊM THÔNG TIN GLOBAL VÀO ĐÂY
+                "global_state_info": {
+                    'departure_time': globals.GLOBAL_STATE["departure_time"],
+                    'arrival_time': globals.GLOBAL_STATE["arrival_time"],
+                    'total_time_minutes': globals.GLOBAL_STATE["total_time_minutes"],
+                    'total_move_time_minutes': globals.GLOBAL_STATE["total_move_time_minutes"],
+                    'total_distance_km': globals.GLOBAL_STATE["total_distance_km"],
+                    'total_co2_emissions_grams': globals.GLOBAL_STATE["total_co2_emissions_grams"],
+                }
             }
+            return result
 
     def _find_nearest_ports(self, origin_point: Point, dest_point: Point) -> Dict:
         """Find nearest ports to origin and destination points"""
@@ -467,7 +483,6 @@ class RouteOptimizer:
             "arrival_time": f"{arrival_hours:02d}:{arrival_minutes:02d}",
         }
 
-
     def _calculate_routes_by_mode(
         self,
         origin_point: Point,
@@ -477,7 +492,7 @@ class RouteOptimizer:
         origin_name: str,
         destination_name: str,
         weight_tons: float,
-        mode: str,
+        mode: list,
         input_departure_hour: str,
         enable_transfer: bool = False,
         max_transfers: int = 10,
@@ -485,75 +500,77 @@ class RouteOptimizer:
     ) -> List[Dict]:
         """Calculate routes by selected mode"""
         routes = []
+        
+        for mode in mode:
 
-        # Route 1: Truck only
-        if mode == "truck_only":
-            reset_global_states()
-            truck_route = self._calculate_truck_route(
-                origin_point,
-                dest_point,
-                weight_tons,
-                input_departure_hour,
-                origin_name,
-                destination_name,
-            )
-            if truck_route:
-                routes.append(truck_route)
-            else:
-                return {'isError': True, 'data': [], 'message': 'Truck route not found'}
-
-        # Route 2: Truck + Ship
-        if mode == "truck_ship":
-            if (
-                nearest_ports["origin_port"] is not None
-                and nearest_ports["dest_port"] is not None
-            ):
+            # Route 1: Truck only
+            if mode == "truck_only":
                 reset_global_states()
-                # Step 1: Find truck routes to nearest ports
-                truck_routes = self._get_truck_routes_to_ports(
-                    origin_point, dest_point, nearest_ports, input_departure_hour, origin_name, destination_name, weight_tons
+                truck_route = self._calculate_truck_route(
+                    origin_point,
+                    dest_point,
+                    weight_tons,
+                    input_departure_hour,
+                    origin_name,
+                    destination_name,
                 )
-
-                if truck_routes:
-                    # Step 2: Find ship routes between ports (direct or via transfer)
-                    ship_routes = self._find_ship_routes_between_ports(
-                        nearest_ports, weight_tons, max_transfers, show_all
-                    )
-
-                    if ship_routes:
-                        # Step 3: Combine truck routes + ship routes
-                        combined_routes = self._combine_truck_ship_routes(
-                            truck_routes, ship_routes, nearest_ports, weight_tons
-                        )
-                    
-                        routes.extend(combined_routes)
-                    else:
-                        return {'isError': True, 'data': [], 'message': MESSAGES['ship_route_not_found']}
+                if truck_route:
+                    routes.append(truck_route)
                 else:
                     return {'isError': True, 'data': [], 'message': 'Truck route not found'}
 
-        # Route 3: Truck + Train
-        if mode == "truck_train":
-            if (nearest_stations['origin_station'] is not None and 
-                nearest_stations['dest_station'] is not None):
-                reset_global_states()
-                # Step 1: Find truck routes to nearest stations
-                truck_routes = self._get_truck_routes_to_stations(
-                    origin_point, dest_point, nearest_stations, input_departure_hour, origin_name, destination_name, weight_tons
-                )
-
-                if truck_routes:
-                    # Step 2: Find train routes between stations (direct or via transfer)
-                    train_routes = self._find_train_routes_between_stations(
-                        nearest_stations, weight_tons, max_transfers, show_all
+            # Route 2: Truck + Ship
+            if mode == "truck_ship":
+                if (
+                    nearest_ports["origin_port"] is not None
+                    and nearest_ports["dest_port"] is not None
+                ):
+                    reset_global_states()
+                    # Step 1: Find truck routes to nearest ports
+                    truck_routes = self._get_truck_routes_to_ports(
+                        origin_point, dest_point, nearest_ports, input_departure_hour, origin_name, destination_name, weight_tons
                     )
 
-                    if train_routes:
-                        # Step 3: Combine truck routes + train routes
-                        combined_routes = self._combine_truck_train_routes(
-                            truck_routes, train_routes, nearest_stations, weight_tons
+                    if truck_routes:
+                        # Step 2: Find ship routes between ports (direct or via transfer)
+                        ship_routes = self._find_ship_routes_between_ports(
+                            nearest_ports, weight_tons, max_transfers, show_all
                         )
-                        routes.extend(combined_routes)
+
+                        if ship_routes:
+                            # Step 3: Combine truck routes + ship routes
+                            combined_routes = self._combine_truck_ship_routes(
+                                truck_routes, ship_routes, nearest_ports, weight_tons
+                            )
+                        
+                            routes.extend(combined_routes)
+                        else:
+                            return {'isError': True, 'data': [], 'message': MESSAGES['ship_route_not_found']}
+                    else:
+                        return {'isError': True, 'data': [], 'message': 'Truck route not found'}
+
+            # Route 3: Truck + Train
+            if mode == "truck_train":
+                if (nearest_stations['origin_station'] is not None and 
+                    nearest_stations['dest_station'] is not None):
+                    reset_global_states()
+                    # Step 1: Find truck routes to nearest stations
+                    truck_routes = self._get_truck_routes_to_stations(
+                        origin_point, dest_point, nearest_stations, input_departure_hour, origin_name, destination_name, weight_tons
+                    )
+
+                    if truck_routes:
+                        # Step 2: Find train routes between stations (direct or via transfer)
+                        train_routes = self._find_train_routes_between_stations(
+                            nearest_stations, weight_tons, max_transfers, show_all
+                        )
+
+                        if train_routes:
+                            # Step 3: Combine truck routes + train routes
+                            combined_routes = self._combine_truck_train_routes(
+                                truck_routes, train_routes, nearest_stations, weight_tons
+                            )
+                            routes.extend(combined_routes)
 
         # Route 4: Truck + Ship + Train
         if mode == "truck_ship_train":
@@ -3997,16 +4014,22 @@ class RouteOptimizer:
             self.db_pool.putconn(conn)
 
     def _nearest_node_id(self, lon: float, lat: float) -> Optional[Dict]:
-        """Find nearest node ID from database"""
-        return self._db_query_one("SELECT * FROM nearest_node_id(%s, %s)", (lon, lat))
-
+            cache_key = (round(lon, 6), round(lat, 6))
+            if cache_key in self._node_cache:
+                return self._node_cache[cache_key]
+            
+            result = self._db_query_one("SELECT * FROM nearest_node_id(%s, %s)", (lon, lat))
+            self._node_cache[cache_key] = result
+            return result
+        
     def _get_node_component(
-        self, start_node: int, end_node: int
-    ) -> Optional[List[Dict]]:
-        """Get node components to check connectivity"""
-        sql = "SELECT * FROM pgr_connectedComponents('SELECT gid AS id, source, target, cost_s as cost, reverse_cost FROM jpn_ways') WHERE node IN (%s, %s)"
-        return self._db_query_all(sql, (start_node, end_node))
+            self, start_node: int, end_node: int
+        ) -> Optional[List[Dict]]:
+            """Get node components to check connectivity using precomputed table"""
+            sql = "SELECT component FROM jpn_components WHERE node IN (%s, %s)"
+            return self._db_query_all(sql, (start_node, end_node))
 
+    @timeit("_route_truck_mm")
     def _route_truck_mm(
         self,
         o_lon: float,
@@ -4015,49 +4038,175 @@ class RouteOptimizer:
         d_lat: float,
         toll_per_km: float = 30.0,
     ) -> Optional[Dict]:
-        """Get truck route from database using route_truck_mm function - copied from app.py"""
-        result = self._db_query_one(
-            """
-            SELECT geom_geojson, distance_km, travel_time_h, motorway_km, toll_estimate_yen,
-                   entry_ic_name, entry_ic_lon, entry_ic_lat,
-                   exit_ic_name,  exit_ic_lon,  exit_ic_lat
-            FROM route_truck_mm(%s, %s, %s, %s, %s)
-            """,
-            (o_lon, o_lat, d_lon, d_lat, toll_per_km),
+        """Compute truck route in Python, equivalent to original SQL function."""
+
+        # 1 Cache key
+        cache_key = (
+            round(o_lon, 6),
+            round(o_lat, 6),
+            round(d_lon, 6),
+            round(d_lat, 6),
+            round(toll_per_km, 2),
+        )
+        if cache_key in self._route_cache:
+            return self._route_cache[cache_key]
+
+        # 2️ Find nearest nodes
+        src_node = self._db_query_one("SELECT nearest_node_id(%s, %s) as nid", (o_lon, o_lat))
+        dst_node = self._db_query_one("SELECT nearest_node_id(%s, %s) as nid", (d_lon, d_lat))
+        if not src_node or not dst_node or src_node["nid"] is None or dst_node["nid"] is None:
+            return None
+        src_id = src_node["nid"]
+        dst_id = dst_node["nid"]
+
+        # 3 Base query với spatial filter
+        base_query = """
+        SELECT gid AS id, source, target, cost_s AS cost, reverse_cost,
+            ST_X(ST_StartPoint(geom)) AS x1, ST_Y(ST_StartPoint(geom)) AS y1,
+            ST_X(ST_EndPoint(geom)) AS x2, ST_Y(ST_EndPoint(geom)) AS y2,
+            length_m, highway, geom
+        FROM jpn_ways
+        WHERE NOT blocked
+        AND geom && ST_Expand(ST_MakeEnvelope(%s, %s, %s, %s, 4326), %s)
+        """
+
+        # 4 Get route edges using pgr_bdAstar
+        buffer_degree = 0.3
+        min_lon = min(o_lon, d_lon) - buffer_degree
+        max_lon = max(o_lon, d_lon) + buffer_degree
+        min_lat = min(o_lat, d_lat) - buffer_degree
+        max_lat = max(o_lat, d_lat) + buffer_degree
+
+        route_edges = self._db_query_all(
+            f"SELECT * FROM pgr_bdAstar($${base_query}$$, %s, %s, directed := true) ORDER BY seq",
+            (min_lon, min_lat, max_lon, max_lat, buffer_degree, src_id, dst_id)
         )
 
-        if not result or not result.get("geom_geojson"):
+        # Fallback không có spatial filter
+        if not route_edges:
+            fallback_query = """
+            SELECT gid AS id, source, target, cost_s AS cost, reverse_cost,
+                ST_X(ST_StartPoint(geom)) AS x1, ST_Y(ST_StartPoint(geom)) AS y1,
+                ST_X(ST_EndPoint(geom)) AS x2, ST_Y(ST_EndPoint(geom)) AS y2,
+                length_m, highway, geom
+            FROM jpn_ways
+            WHERE NOT blocked
+            """
+            route_edges = self._db_query_all(
+                f"SELECT * FROM pgr_bdAstar($${fallback_query}$$, %s, %s, directed := true) ORDER BY seq",
+                (src_id, dst_id)
+            )
+
+        if not route_edges:
             return None
 
-        return {
-            "geometry": json.loads(result["geom_geojson"]),
-            "distance_km": float(result["distance_km"]),
-            "travel_time_h": float(result["travel_time_h"]),
-            "motorway_km": float(result["motorway_km"]),
-            "toll_estimate_yen": (
-                float(result["toll_estimate_yen"])
-                if result["toll_estimate_yen"] is not None
-                else None
-            ),
-            "entry_ic": (
-                {
-                    "name": result["entry_ic_name"],
-                    "lon": result["entry_ic_lon"],
-                    "lat": result["entry_ic_lat"],
-                }
-                if result.get("entry_ic_name") is not None
-                else None
-            ),
-            "exit_ic": (
-                {
-                    "name": result["exit_ic_name"],
-                    "lon": result["exit_ic_lon"],
-                    "lat": result["exit_ic_lat"],
-                }
-                if result.get("exit_ic_name") is not None
-                else None
-            ),
+        # 5 Get detailed edge info với reverse_cost giống SQL function
+        edge_ids = [str(r["edge"]) for r in route_edges]
+        if not edge_ids:
+            return None
+        edge_ids_str = ",".join(edge_ids)
+        edges_detail = self._db_query_all(
+            f"""
+            SELECT gid AS id, source, target, cost_s,
+                CASE 
+                    WHEN oneway = 'YES' THEN 1e15
+                    WHEN oneway = 'NO' THEN cost_s
+                    WHEN oneway = 'UNKNOWN' THEN cost_s
+                    WHEN oneway = 'REVERSIBLE' THEN cost_s
+                    ELSE cost_s
+                END AS reverse_cost,
+                length_m, highway, geom, maxspeed_forward
+            FROM jpn_ways
+            WHERE gid IN ({edge_ids_str}) AND NOT blocked
+            ORDER BY array_position(ARRAY[{edge_ids_str}]::bigint[], gid)
+            """,
+            ()
+        )
+        if not edges_detail:
+            return None
+
+        # 6 Merge geometry và tính metrics
+        geoms = [e["geom"] for e in edges_detail]
+        merged_geom = self._db_query_one(
+            "SELECT ST_AsGeoJSON(ST_LineMerge(ST_Union(geom))) AS gj FROM unnest(%s::geometry[]) AS geom",
+            (geoms,)
+        )
+        if not merged_geom or not merged_geom["gj"]:
+            return None
+
+        distance_km = sum(e["length_m"] for e in edges_detail) / 1000.0
+
+        # Tính travel_time giống SQL function
+        travel_time_h = 0.0
+        motorway_km = 0.0
+        
+        for edge in edges_detail:
+            length_m = edge["length_m"]
+            highway = edge["highway"]
+            maxspeed = edge["maxspeed_forward"]
+            
+            # Logic tính speed giống hệt SQL function
+            if maxspeed is not None:
+                speed = float(maxspeed)
+            else:
+                if highway in ('motorway', 'motorway_link'):
+                    speed = 120.0
+                elif highway in ('trunk', 'trunk_link'):
+                    speed = 100.0
+                elif highway in ('primary', 'primary_link'):
+                    speed = 80.0
+                elif highway in ('secondary', 'secondary_link'):
+                    speed = 60.0
+                elif highway in ('tertiary', 'tertiary_link'):
+                    speed = 40.0
+                else:
+                    speed = 30.0
+            
+            travel_time_h += length_m / (speed * 1000.0)
+            
+            if highway in ("motorway", "motorway_link"):
+                motorway_km += length_m / 1000.0
+
+        toll_estimate_yen = round(motorway_km * toll_per_km)
+
+        # 7 Entry/Exit IC - chỉ lấy edges có trong route
+        motorway_edges_in_route = []
+        for edge_detail in edges_detail:
+            if edge_detail["highway"] in ("motorway", "motorway_link"):
+                motorway_edges_in_route.append(edge_detail)
+        
+        entry_ic = exit_ic = None
+        if motorway_edges_in_route:
+            first_motorway = motorway_edges_in_route[0]
+            last_motorway = motorway_edges_in_route[-1]
+            
+            entry_point = self._db_query_one("SELECT ST_StartPoint(%s) as pt", (first_motorway["geom"],))
+            exit_point = self._db_query_one("SELECT ST_EndPoint(%s) as pt", (last_motorway["geom"],))
+            
+            if entry_point:
+                entry_ic = self._db_query_one(
+                    "SELECT name, lon, lat FROM motorway_ic ORDER BY ST_SetSRID(ST_MakePoint(lon,lat),4326) <-> %s LIMIT 1",
+                    (entry_point["pt"],)
+                )
+            if exit_point:
+                exit_ic = self._db_query_one(
+                    "SELECT name, lon, lat FROM motorway_ic ORDER BY ST_SetSRID(ST_MakePoint(lon,lat),4326) <-> %s LIMIT 1",
+                    (exit_point["pt"],)
+                )
+
+        # 8 Build result
+        route = {
+            "geometry": json.loads(merged_geom["gj"]),
+            "distance_km": distance_km,
+            "travel_time_h": travel_time_h,
+            "motorway_km": motorway_km,
+            "toll_estimate_yen": toll_estimate_yen,
+            "entry_ic": {"name": entry_ic["name"], "lon": entry_ic["lon"], "lat": entry_ic["lat"]} if entry_ic else None,
+            "exit_ic": {"name": exit_ic["name"], "lon": exit_ic["lon"], "lat": exit_ic["lat"]} if exit_ic else None,
         }
+
+        self._route_cache[cache_key] = route
+        return route
 
     def _get_truck_route_info_db(
         self, start_point: Point, end_point: Point, toll_per_km: float = 30.0
