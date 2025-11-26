@@ -24,7 +24,7 @@ from helper import (
     find_ship_by_departure_time,
     find_train_by_departure_time,
     calc_wait_minutes,
-    reset_global_states
+    reset_global_states, parse_time
 )
 
 try:
@@ -485,6 +485,7 @@ class RouteOptimizer:
                     continue
                 
                 route_time = data.get("time")
+                print("TIMEZ ", route_time)
                 if route_time is None:
                     continue
 
@@ -546,7 +547,8 @@ class RouteOptimizer:
         default_origin_station = origin_stations.iloc[0] if not origin_stations.empty else None
         default_dest_station = dest_stations.iloc[0] if not dest_stations.empty else None
 
-        
+        print("NEAREST ORIGIN STATIONS: ", origin_stations, "\n")
+        print("NEAREST DEST STATIONS: ", dest_stations, "\n")
         if origin_stations.empty or dest_stations.empty:
             return {
                 "origin_station": default_origin_station,
@@ -575,9 +577,6 @@ class RouteOptimizer:
                     best_time = route_time
                     best_origin_row = o_row
                     best_dest_row = d_row
-                    
-        print("NEAREST ORIGIN STATIONS: ", origin_stations, "\n")
-        print("NEAREST DEST STATIONS: ", dest_stations, "\n")
         
         if best_origin_row is not None and best_dest_row is not None:
             chosen_origin = best_origin_row
@@ -3545,8 +3544,7 @@ class RouteOptimizer:
                 dest_port_data["X"].iloc[0],
             )
 
-            if not route_time or not arrival_time or not ship_data["Departure_Time"].iloc[0] or not ship_data["Speed_Upper_(km/h)"].iloc[0]:
-                route_time = (distance / 1000) * 1.5 / speed_upper
+            if not arrival_time or not ship_data["Departure_Time"].iloc[0] or not ship_data["Speed_Upper_(km/h)"].iloc[0]:
                 arrival_time = add_hours(departure_time, route_time)
                 globals.GLOBAL_STATE["warning_message"] = MESSAGES['no_time_data']
 
@@ -4107,14 +4105,20 @@ class RouteOptimizer:
 
                 globals.GLOBAL_STATE["warning_message"] = MESSAGES['no_time_data']
 
-            departure_time_dt = datetime.strptime(departure_time.strip(), "%H:%M:%S")
-            departure_time = departure_time_dt.strftime("%H:%M")
+            departure_time_dt = parse_time(departure_time)
 
-            arrival_time_dt = datetime.strptime(arrival_time.strip(), "%H:%M:%S")
-            arrival_time = arrival_time_dt.strftime("%H:%M")
+            departure_time_str = (
+                departure_time_dt.strftime("%H:%M") if departure_time_dt else None
+            )
+
+            arrival_time_dt = parse_time(arrival_time)
+
+            arrival_time_str = (
+                arrival_time_dt.strftime("%H:%M") if arrival_time_dt else None
+            )
 
 
-            return {"time": time_minutes, "distance": distance_km * 1000, 'departure_time': departure_time, 'arrival_time': arrival_time}
+            return {"time": time_minutes, "distance": distance_km * 1000, 'departure_time': departure_time_str, 'arrival_time': arrival_time_str}
 
         return None
 
@@ -4134,15 +4138,11 @@ class RouteOptimizer:
         if route.empty:
             return False, None
 
-        try:
-            train_data = find_train_by_departure_time(
-                route,
-                globals.GLOBAL_STATE["arrival_time_buffer_wait_time"],
-            )
-        except Exception as e:
-            print("Error find_train_by_departure_time:", e)
-            return False, None
-
+        train_data = find_train_by_departure_time(
+            route,
+            globals.GLOBAL_STATE["arrival_time_buffer_wait_time"],
+        )
+        
         if (
             train_data is None
             or isinstance(train_data, list)
@@ -4155,10 +4155,9 @@ class RouteOptimizer:
         if hasattr(duration, "total_seconds"):
             time_minutes = duration.total_seconds() / 60
         else:
-            time_minutes = 0
+            time_minutes = None
 
-        distance_km = time_minutes * 50
-        distance_m = distance_km * 1000
+        distance_m = time_minutes * 50 * 1000 if time_minutes is not None else None
         
         data = {
             "time": time_minutes,
