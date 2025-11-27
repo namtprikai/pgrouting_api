@@ -4078,80 +4078,54 @@ class RouteOptimizer:
         src_id = src_node["nid"]
         dst_id = dst_node["nid"]
         
-        buffer_degree = max(abs(o_lon - d_lon), abs(o_lat - d_lat)) * 0.5
-        min_lon = min(o_lon, d_lon) - buffer_degree
-        max_lon = max(o_lon, d_lon) + buffer_degree
-        min_lat = min(o_lat, d_lat) - buffer_degree
-        max_lat = max(o_lat, d_lat) + buffer_degree
-
-        base_query = """
-        SELECT gid AS id, source, target, cost_s AS cost, reverse_cost,
-            ST_X(ST_StartPoint(geom)) AS x1, ST_Y(ST_StartPoint(geom)) AS y1,
-            ST_X(ST_EndPoint(geom)) AS x2, ST_Y(ST_EndPoint(geom)) AS y2,
-            length_m, highway, geom
-        FROM jpn_ways
-        WHERE NOT blocked
-        AND geom && ST_Expand(
-            ST_MakeEnvelope($1::float, $2::float, $3::float, $4::float, 4326),
-            $5::float
-        )
+        start = time.time()
+        
+        route_query = """
+            WITH route AS (
+                SELECT * FROM pgr_bdAstar(
+                    $$
+                    SELECT gid AS id, source, target, cost_s AS cost, reverse_cost,
+                        ST_X(ST_StartPoint(geom)) AS x1, ST_Y(ST_StartPoint(geom)) AS y1,
+                        ST_X(ST_EndPoint(geom)) AS x2, ST_Y(ST_EndPoint(geom)) AS y2
+                    FROM jpn_ways
+                    WHERE NOT blocked
+                    $$,
+                    $1::bigint, $2::bigint, directed := true
+                )
+            ),
+            edge_details AS (
+                SELECT 
+                    w.gid AS id, 
+                    w.source, 
+                    w.target, 
+                    w.cost_s,
+                    CASE 
+                        WHEN w.oneway = 'YES' THEN 1e15
+                        ELSE w.cost_s
+                    END AS reverse_cost,
+                    w.length_m,
+                    w.highway,
+                    w.geom,
+                    w.maxspeed_forward,
+                    r.seq,
+                    r.node,
+                    r.edge,
+                    r.cost AS route_cost
+                FROM jpn_ways w
+                JOIN route r ON w.gid = r.edge
+                WHERE NOT w.blocked
+                ORDER BY r.seq
+            )
+            SELECT * FROM edge_details;
         """
 
-        route_edges = await self._db_query_all(
-            f"""
-            SELECT * FROM pgr_bdAstar(
-                $${base_query}$$,
-                $6::bigint,  -- src_id
-                $7::bigint,  -- dst_id
-                directed := true
-            ) ORDER BY seq
-            """,
-            [min_lon, min_lat, max_lon, max_lat, buffer_degree, src_id, dst_id]
-        )
-
-        start = time.time()
-        if not route_edges:
-            fallback_query = """
-            SELECT gid AS id, source, target, cost_s AS cost, reverse_cost,
-                ST_X(ST_StartPoint(geom)) AS x1, ST_Y(ST_StartPoint(geom)) AS y1,
-                ST_X(ST_EndPoint(geom)) AS x2, ST_Y(ST_EndPoint(geom)) AS y2,
-                length_m, highway, geom
-            FROM jpn_ways
-            WHERE NOT blocked
-            """
-            route_edges = await self._db_query_all(
-                f"SELECT * FROM pgr_bdAstar($${fallback_query}$$, {src_id}::bigint, {dst_id}::bigint, directed := true) ORDER BY seq",
-                []
-            )
-
-        if not route_edges:
-            return None
-
-        # 5 Get detailed edges
-        edge_ids = [r["edge"] for r in route_edges]
-        if not edge_ids:
-            return None
-
         edges_detail = await self._db_query_all(
-            """
-            SELECT gid AS id, source, target, cost_s,
-                CASE 
-                    WHEN oneway = 'YES' THEN 1e15
-                    ELSE cost_s
-                END AS reverse_cost,
-                length_m,
-                highway,
-                geom,
-                maxspeed_forward
-            FROM jpn_ways
-            WHERE gid = ANY($1::bigint[])
-                AND NOT blocked
-            ORDER BY array_position($1::bigint[], gid);
-            """,
-            [edge_ids]
+            route_query,
+            [src_id, dst_id]
         )
+
         end = time.time()
-        print("tg2 = ", end-start)
+        print("tg3 = ", end-start)
 
         if not edges_detail:
             return None
@@ -4221,6 +4195,59 @@ class RouteOptimizer:
         self._route_cache[cache_key] = route
         return route
 
+    # @timeit("Route Truck MM (async)")
+    # async def _route_truck_mm(
+    #     self,
+    #     o_lon: float,
+    #     o_lat: float,
+    #     d_lon: float,
+    #     d_lat: float,
+    #     toll_per_km: float = 30.0,
+    # ) -> Optional[Dict]:
+    #     """Get truck route using SQL function route_truck_mm() asynchronously"""
+
+    #     result = await self._db_query_one(
+    #         """
+    #         SELECT geom_geojson, distance_km, travel_time_h, motorway_km, toll_estimate_yen,
+    #             entry_ic_name, entry_ic_lon, entry_ic_lat,
+    #             exit_ic_name,  exit_ic_lon,  exit_ic_lat
+    #         FROM route_truck_mm($1, $2, $3, $4, $5)
+    #         """,
+    #         (o_lon, o_lat, d_lon, d_lat, toll_per_km),
+    #     )
+
+    #     if not result or not result.get("geom_geojson"):
+    #         return None
+
+    #     return {
+    #         "geometry": json.loads(result["geom_geojson"]),
+    #         "distance_km": float(result["distance_km"]),
+    #         "travel_time_h": float(result["travel_time_h"]),
+    #         "motorway_km": float(result["motorway_km"]),
+    #         "toll_estimate_yen": (
+    #             float(result["toll_estimate_yen"])
+    #             if result["toll_estimate_yen"] is not None
+    #             else None
+    #         ),
+    #         "entry_ic": (
+    #             {
+    #                 "name": result["entry_ic_name"],
+    #                 "lon": result["entry_ic_lon"],
+    #                 "lat": result["entry_ic_lat"],
+    #             }
+    #             if result.get("entry_ic_name") is not None
+    #             else None
+    #         ),
+    #         "exit_ic": (
+    #             {
+    #                 "name": result["exit_ic_name"],
+    #                 "lon": result["exit_ic_lon"],
+    #                 "lat": result["exit_ic_lat"],
+    #             }
+    #             if result.get("exit_ic_name") is not None
+    #             else None
+    #         ),
+    #     }
 
     @timeit("_get_truck_route_info_db")
     async def _get_truck_route_info_db(
