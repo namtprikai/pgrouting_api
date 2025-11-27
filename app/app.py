@@ -14,6 +14,7 @@ from helper import process_ship_data, process_train_data
 from constant import *
 import globals
 from helper import create_response
+from starlette.middleware.gzip import GZipMiddleware
 
 
 
@@ -123,7 +124,7 @@ class MultimodalBody(BaseModel):
 # FastAPI
 # =========================
 app = FastAPI(title="Multimodal Truck/Train/Ship Router (FastAPI)")
-
+app.add_middleware(GZipMiddleware, minimum_size=1000)
 
 @app.get("/api/routes-map")
 def get_route_map():
