@@ -162,7 +162,7 @@ async def multimodal_route(payload: MultimodalBody):
     destination_lon = float(payload.destination_lon) if payload.destination_lon is not None else None
     find_station_radius_km = payload.find_station_radius_km if payload.find_station_radius_km is not None else 100
     find_port_radius_km = payload.find_port_radius_km if payload.find_port_radius_km is not None else 100
-    mode = payload.mode[0].lower() if payload.mode is not None else STREET_TYPE["TRUCK_ONLY"].lower()
+    mode = payload.mode if payload.mode is not None else ["truck_only"]
     weight_tons = payload.weight_tons if payload.weight_tons is not None else 1
     max_transfers = (
         payload.max_transfers if payload.max_transfers is not None else 1
