@@ -547,47 +547,9 @@ class RouteOptimizer:
         default_origin_station = origin_stations.iloc[0] if not origin_stations.empty else None
         default_dest_station = dest_stations.iloc[0] if not dest_stations.empty else None
 
-        print("NEAREST ORIGIN STATIONS: ", origin_stations, "\n")
-        print("NEAREST DEST STATIONS: ", dest_stations, "\n")
-        if origin_stations.empty or dest_stations.empty:
-            return {
-                "origin_station": default_origin_station,
-                "dest_station": default_dest_station,
-            }
-        
-        best_origin_row = None
-        best_dest_row = None
-        best_time = None
-
-        for _, o_row in origin_stations.iterrows():
-            origin_name = o_row["Station_Name"]
-
-            for _, d_row in dest_stations.iterrows():
-                dest_name = d_row["Station_Name"]
-                available, data = self._is_direct_train_route_available(origin_station_name=origin_name, dest_station_name=dest_name)
-
-                if not available or not data:
-                    continue
-                
-                route_time = data.get("time")
-                if route_time is None:
-                    continue
-
-                if best_time is None or route_time < best_time:
-                    best_time = route_time
-                    best_origin_row = o_row
-                    best_dest_row = d_row
-        
-        if best_origin_row is not None and best_dest_row is not None:
-            chosen_origin = best_origin_row
-            chosen_dest = best_dest_row
-        else:
-            chosen_origin = default_origin_station
-            chosen_dest = default_dest_station
-
         return {
-            "origin_station": chosen_origin,
-            "dest_station": chosen_dest,
+            "origin_station": default_origin_station,
+            "dest_station": default_dest_station,
         }
 
     def _nearest_station(self, lon: float, lat: float):
@@ -2256,6 +2218,10 @@ class RouteOptimizer:
         try:
             origin_station = nearest_stations["origin_station"]
             dest_station = nearest_stations["dest_station"]
+
+            print(origin_station, 'origin_station')
+            print(dest_station, 'dest_station')
+            
 
             # Try to find direct train route first
             direct_train = self._get_train_route_info(
@@ -4142,6 +4108,9 @@ class RouteOptimizer:
             route,
             globals.GLOBAL_STATE["arrival_time_buffer_wait_time"],
         )
+
+        print(self.train_time["Departure_Station_Name"], origin_station_name, '1111111')
+        print(train_data)
         
         if (
             train_data is None
