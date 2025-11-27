@@ -3820,13 +3820,12 @@ class RouteOptimizer:
             & (self.train_time["Arrival_Station_Code"] == dest_station_code)
         ]
 
-        print(route, '///////')
-
         if not route.empty:
             train_data = find_train_by_departure_time(route, globals.GLOBAL_STATE['arrival_time_buffer_wait_time'])
 
             departure_time = train_data["Departure_Time"].iloc[0] if train_data["Departure_Time"].iloc[0] else globals.GLOBAL_STATE["arrival_time_previous_route"]
             arrival_time = train_data["Arrival_Time"].iloc[0] if train_data["Arrival_Time"].iloc[0] else None
+            distance_km = train_data["Distance_(km)"].iloc[0] if train_data["Distance_(km)"].iloc[0] else None
 
             # Calculate travel time from train_Duration
             duration = route["train_Duration2"].iloc[0]
@@ -3835,8 +3834,22 @@ class RouteOptimizer:
             else:
                 time_minutes = 0
 
-            # Estimate distance (can be improved by using real data)
-            distance_km = time_minutes * 50  # Assume average speed 50 km/h
+            # Calculate distance between stations
+            origin_station_data = self.station_gdf[
+                self.station_gdf["Station_Code"] == origin_station_code
+            ]
+            dest_station_data = self.station_gdf[self.station_gdf["Station_Code"] == dest_station_code]
+
+            if not distance_km:
+                distance = self._calculate_distance(
+                    origin_station_data["lat"].iloc[0],
+                    origin_station_data["lon"].iloc[0],
+                    dest_station_data["lat"].iloc[0],
+                    dest_station_data["lon"].iloc[0],
+                )
+                distance_km = distance * 1.5
+
+                globals.GLOBAL_STATE["warning_message"] = MESSAGES['no_time_data']
 
             departure_time_dt = datetime.strptime(departure_time.strip(), "%H:%M:%S")
             departure_time = departure_time_dt.strftime("%H:%M")
