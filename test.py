@@ -46,11 +46,6 @@ async def test_async_api():
                     print(f"\n🎯 Tổng số kết quả: {len(data.get('results', []))}")
                     print("✅ API hoạt động thành công!")
                     
-                    # Lưu file đầy đủ nếu muốn xem
-                    with open("api_response.json", "w", encoding="utf-8") as f:
-                        json.dump(data, f, ensure_ascii=False, indent=2)
-                    print("💾 Đã lưu response đầy đủ vào file: api_response.json")
-                    
                 else:
                     print(f"❌ Lỗi: {response.status}")
                     error_text = await response.text()

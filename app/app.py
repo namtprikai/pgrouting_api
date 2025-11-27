@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional, List
+from typing import Any, Dict, Optional
 import asyncio
 import asyncpg
 from fastapi import FastAPI
@@ -7,8 +7,8 @@ from pydantic_settings import BaseSettings
 from route_optimizer import RouteOptimizer
 from helper import process_ship_data, process_train_data
 from constant import *
-from helper import create_response
-
+from helper import create_response, save_summary_to_geojson
+import threading
 
 # =========================
 # 環境変数
@@ -90,18 +90,24 @@ class MultimodalBody(BaseModel):
 # =========================
 app = FastAPI(title="Multimodal Truck/Train/Ship Router (FastAPI)")
 
+
+# Startup event to create DB pool
 @app.on_event("startup")
 async def startup_event():
     """Initialize database connection pool on startup"""
     await db.create_pool()
     print("Database connection pool created")
 
+
+# Shutdown event to close DB pool
 @app.on_event("shutdown")
 async def shutdown_event():
     """Close database connection pool on shutdown"""
     await db.close_pool()
     print("Database connection pool closed")
 
+
+# API endpoint for getting available routes
 @app.get("/api/routes-map")
 async def get_route_map():
     """Get available ship and train routes (async version)"""
@@ -140,6 +146,7 @@ async def get_route_map():
     return {"ship_routes": ship_data, "train_routes": train_data}
 
 
+# API endpoint for multimodal route search
 @app.post("/api/search-route")
 async def multimodal_route(payload: MultimodalBody):
     """Find multimodal routes (fully async version)"""
@@ -221,21 +228,21 @@ async def multimodal_route(payload: MultimodalBody):
                 }
             else:
                 if 'routes' in mode_results and mode_results['routes']:
-                    route = mode_results['routes'][0]
+                    all_routes = mode_results['routes']
                     global_info = mode_results.get("global_state_info", {})
-                    
-                    # Convert to GeoJSON if route found
+
                     single_route_result = {
                         "origin": mode_results.get("origin", {}),
                         "destination": mode_results.get("destination", {}),
                         "weight_tons": mode_results.get("weight_tons", 10.0),
-                        "routes": [route],
+                        "routes": all_routes,
                         "mode": [current_mode],
                         "enable_transfer": True,
                         "max_transfers": max_transfers,
                     }
+
                     geojson = optimizer._convert_to_geojson(single_route_result)
-                    
+
                     route_info = {
                         'mode': current_mode,
                         'departure_time': global_info.get("departure_time", ""),
@@ -244,10 +251,11 @@ async def multimodal_route(payload: MultimodalBody):
                         'total_move_time_minutes': global_info.get("total_move_time_minutes", 0),
                         'total_distance_km': global_info.get("total_distance_km", 0),
                         'total_co2_emissions_grams': global_info.get("total_co2_emissions_grams", 0),
-                        'message': route.get('warning_message', ''), 
                         'geojson': geojson
                     }
+
                     return route_info
+
                 else:
                     return {
                         'mode': current_mode,
@@ -298,11 +306,15 @@ async def multimodal_route(payload: MultimodalBody):
         destination_name, destination_lat, destination_lon, 
         all_results
     )
+    
+    # Check the returned data using geojson file
+    save_summary_to_geojson(summary, "output/result.geojson")
+    
     return summary
 
 
-# Health check endpoint
-@app.get("/health")
+# API endpoint for health check connection to DB
+@app.get("api/health")
 async def health_check():
     """Health check endpoint"""
     try:
@@ -317,7 +329,7 @@ async def health_check():
         return {"status": "unhealthy", "error": str(e)}
 
 
-# Test endpoint để debug route finding
+# API endpoint for testing route finding with debug info
 @app.post("/api/test-route")
 async def test_route():
     """Test route finding with debug information"""
@@ -361,6 +373,16 @@ async def test_route():
         
     except Exception as e:
         return {"error": f"Test failed: {str(e)}"}
+
+
+# API endpoint for getting thread info
+@app.get("/thread-info")
+async def thread_info():
+    return {
+        "total_threads": threading.active_count(),
+        "thread_names": [t.name for t in threading.enumerate()]
+    }
+
 
 # 直接起動用
 if __name__ == "__main__":

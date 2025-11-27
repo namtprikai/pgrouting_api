@@ -28,6 +28,8 @@ from helper import (
 )
 from decoratorr import timeit
 
+import time
+
 try:
     import asyncpg
     ASYNCPG_AVAILABLE = True
@@ -341,14 +343,12 @@ class RouteOptimizer:
             # Find optimal routes
             optimal_routes = self._find_optimal_routes(routes)
             
-            # 🚨 THÊM: Trả về thông tin từ global state
             result = {
                 "origin": {"lat": origin_lat, "lon": origin_lon},
                 "destination": {"lat": dest_lat, "lon": dest_lon},
                 "weight_tons": 0,
                 "routes": routes,
                 "optimal_routes": optimal_routes,
-                # THÊM THÔNG TIN GLOBAL VÀO ĐÂY
                 "global_state_info": {
                     'departure_time': globals.GLOBAL_STATE["departure_time"],
                     'arrival_time': globals.GLOBAL_STATE["arrival_time"],
@@ -427,6 +427,7 @@ class RouteOptimizer:
         }
 
     async def _nearest_station(self, lon: float, lat: float):
+        """Find nearest station to given coordinates using database query"""
         return await self._db_query_one("SELECT * FROM nearest_station($1, $2)", (lon, lat))
     
     def _calculate_travel_time(self, input_departure_hour, travel_hours: float, wait: bool = False):
@@ -3970,6 +3971,21 @@ class RouteOptimizer:
             print("Truck routes will use fallback method")
             self.db_pool = None
 
+    @timeit("_get_node_component")    
+    async def _get_node_component(
+        self, start_node: int, end_node: int
+    ) -> Optional[List[Dict]]:
+        """
+        Get node components to check connectivity using precomputed table.
+        """
+        sql = "SELECT component FROM jpn_components WHERE node = ANY($1::bigint[])"
+        params = [start_node, end_node]
+        rows = await self._db_query_all(sql, [params])
+        
+        if not rows:
+            return None
+        return rows
+
     @timeit("_db_query_one")
     async def _db_query_one(self, query: str, params: tuple) -> Optional[Dict]:
         """Execute a single query and return one result asynchronously."""
@@ -3991,21 +4007,21 @@ class RouteOptimizer:
 
     @timeit("_db_query_all")
     async def _db_query_all(self, query: str, params: tuple) -> Optional[List[Dict]]:
-        """Execute a query and return all results asynchronously."""
+        """Execute an async query and return all results"""
         if not self.db_pool:
-            await self._init_database()
-            if not self.db_pool:
-                return None
+            return None
 
         try:
             async with self.db_pool.acquire() as conn:
-                rows = await conn.fetch(query, *(params or ()))
-                return [dict(r) for r in rows] if rows else None
+                rows = await conn.fetch(query, *params)
+                if not rows:
+                    return None
+
+                result = [dict(r) for r in rows]
+                return result
 
         except Exception as e:
             print(f"[ERROR] _db_query_all: {e}")
-            print(f"Query: {query}")
-            print(f"Params: {params}")
             return None
    
     @timeit("_nearest_node_id")
@@ -4014,35 +4030,18 @@ class RouteOptimizer:
         if cache_key in self._node_cache:
             return self._node_cache[cache_key]
 
-        # await vì _db_query_one là async
         result = await self._db_query_one("SELECT nearest_node_id($1, $2) AS nid", (lon, lat))
 
         if result is None:
             return None
 
-        # Nếu DB trả trực tiếp int (một số trường hợp), wrap vào dict
         if isinstance(result, int):
             result = {"nid": result}
 
         self._node_cache[cache_key] = result
         return result
 
-    @timeit("_get_node_component")    
-    async def _get_node_component(
-        self, start_node: int, end_node: int
-    ) -> Optional[List[Dict]]:
-        """
-        Get node components to check connectivity using precomputed table.
-        Returns list of rows, each row like: {"component": int}
-        """
-        sql = "SELECT component FROM jpn_components WHERE node = ANY($1::int[])"
-        params = [start_node, end_node]
-        rows = await self._db_query_all(sql, (params,))
-        if not rows:
-            return None
-        return rows
-
-    @timeit("_route_truck_mm")
+    @timeit("_route_truck_mm")    
     async def _route_truck_mm(
         self,
         o_lon: float,
@@ -4065,15 +4064,26 @@ class RouteOptimizer:
             return self._route_cache[cache_key]
 
         # 2 Find nearest nodes
-        src_node = await self._db_query_one("SELECT nearest_node_id($1, $2) as nid", (o_lon, o_lat))
-        dst_node = await self._db_query_one("SELECT nearest_node_id($1, $2) as nid", (d_lon, d_lat))
+        src_node = await self._db_query_one(
+            "SELECT nearest_node_id($1::float, $2::float) as nid", 
+            (o_lon, o_lat)
+        )
+        dst_node = await self._db_query_one(
+            "SELECT nearest_node_id($1::float, $2::float) as nid", 
+            (d_lon, d_lat)
+        )
 
         if not src_node or not dst_node or src_node["nid"] is None or dst_node["nid"] is None:
             return None
         src_id = src_node["nid"]
         dst_id = dst_node["nid"]
+        
+        buffer_degree = max(abs(o_lon - d_lon), abs(o_lat - d_lat)) * 0.5
+        min_lon = min(o_lon, d_lon) - buffer_degree
+        max_lon = max(o_lon, d_lon) + buffer_degree
+        min_lat = min(o_lat, d_lat) - buffer_degree
+        max_lat = max(o_lat, d_lat) + buffer_degree
 
-        # 3 Base query with spatial filter
         base_query = """
         SELECT gid AS id, source, target, cost_s AS cost, reverse_cost,
             ST_X(ST_StartPoint(geom)) AS x1, ST_Y(ST_StartPoint(geom)) AS y1,
@@ -4082,30 +4092,24 @@ class RouteOptimizer:
         FROM jpn_ways
         WHERE NOT blocked
         AND geom && ST_Expand(
-            ST_MakeEnvelope($1::double precision, $2::double precision, $3::double precision, $4::double precision, 4326),
-            $5::double precision
+            ST_MakeEnvelope($1::float, $2::float, $3::float, $4::float, 4326),
+            $5::float
         )
         """
-
-        buffer_degree = 0.3
-        min_lon = min(o_lon, d_lon) - buffer_degree
-        max_lon = max(o_lon, d_lon) + buffer_degree
-        min_lat = min(o_lat, d_lat) - buffer_degree
-        max_lat = max(o_lat, d_lat) + buffer_degree
 
         route_edges = await self._db_query_all(
             f"""
             SELECT * FROM pgr_bdAstar(
-                $$ {base_query} $$::text,
-                $6::bigint,
-                $7::bigint,
+                $${base_query}$$,
+                $6::bigint,  -- src_id
+                $7::bigint,  -- dst_id
                 directed := true
             ) ORDER BY seq
             """,
             [min_lon, min_lat, max_lon, max_lat, buffer_degree, src_id, dst_id]
         )
 
-        # Fallback without spatial filter
+        start = time.time()
         if not route_edges:
             fallback_query = """
             SELECT gid AS id, source, target, cost_s AS cost, reverse_cost,
@@ -4116,33 +4120,39 @@ class RouteOptimizer:
             WHERE NOT blocked
             """
             route_edges = await self._db_query_all(
-                f"SELECT * FROM pgr_bdAstar($${fallback_query}$$, $1, $2, directed := true) ORDER BY seq",
-                [src_id, dst_id]
+                f"SELECT * FROM pgr_bdAstar($${fallback_query}$$, {src_id}::bigint, {dst_id}::bigint, directed := true) ORDER BY seq",
+                []
             )
 
         if not route_edges:
             return None
 
         # 5 Get detailed edges
-        edge_ids = [str(r["edge"]) for r in route_edges]
+        edge_ids = [r["edge"] for r in route_edges]
         if not edge_ids:
             return None
 
-        edge_ids_str = ",".join(edge_ids)
         edges_detail = await self._db_query_all(
-            f"""
+            """
             SELECT gid AS id, source, target, cost_s,
                 CASE 
                     WHEN oneway = 'YES' THEN 1e15
                     ELSE cost_s
                 END AS reverse_cost,
-                length_m, highway, geom, maxspeed_forward
+                length_m,
+                highway,
+                geom,
+                maxspeed_forward
             FROM jpn_ways
-            WHERE gid IN ({edge_ids_str}) AND NOT blocked
-            ORDER BY array_position(ARRAY[{edge_ids_str}]::bigint[], gid)
+            WHERE gid = ANY($1::bigint[])
+                AND NOT blocked
+            ORDER BY array_position($1::bigint[], gid);
             """,
-            []
+            [edge_ids]
         )
+        end = time.time()
+        print("tg2 = ", end-start)
+
         if not edges_detail:
             return None
 
@@ -4154,7 +4164,6 @@ class RouteOptimizer:
         )
         if not merged_geom or not merged_geom["gj"]:
             return None
-
         distance_km = sum(e["length_m"] for e in edges_detail) / 1000.0
 
         # Travel time and motorway km
@@ -4212,6 +4221,7 @@ class RouteOptimizer:
         self._route_cache[cache_key] = route
         return route
 
+
     @timeit("_get_truck_route_info_db")
     async def _get_truck_route_info_db(
         self, start_point: Point, end_point: Point, toll_per_km: float = 30.0
@@ -4228,7 +4238,6 @@ class RouteOptimizer:
                 print("Debug: Could not find nearest nodes")
                 return None
 
-            # Dùng key "nid" đúng với dữ liệu trả về
             start_nid = start_node["nid"]
             end_nid = end_node["nid"]
 
