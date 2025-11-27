@@ -8,3 +8,6 @@ DROP TABLE IF EXISTS jpn_ways;
             w.maxspeed_forward as maxspeed_forward, 
             w.maxspeed_backward as maxspeed_backward 
     FROM ways w inner join "configuration" c on w.tag_id = c.tag_id
+
+CREATE INDEX IF NOT EXISTS jpn_ways_geom_idx ON jpn_ways USING GIST (geom);
+CREATE INDEX IF NOT EXISTS jpn_ways_gid_idx ON jpn_ways(gid);

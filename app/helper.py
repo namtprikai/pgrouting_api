@@ -15,7 +15,6 @@ RouteDict = Dict[str, Any]
 def _is_num(x):
     return isinstance(x, (int, float)) and math.isfinite(x)
 
-
 def _clean_points(coords):
     out = []
     for p in coords:
@@ -27,7 +26,6 @@ def _clean_points(coords):
         ):
             out.append((float(p[0]), float(p[1])))
     return out
-
 
 def _flatten_if_singleton_segments(coords):
     for _ in range(2):
@@ -42,7 +40,6 @@ def _flatten_if_singleton_segments(coords):
         else:
             break
     return coords
-
 
 def extract_linestring(geom):
     # 1) Shapely
@@ -87,7 +84,6 @@ def extract_linestring(geom):
         return LineString(pts)
     return LineString()
 
-
 def _nz(x):
     """None/NaN/inf -> 0.0"""
     try:
@@ -96,14 +92,12 @@ def _nz(x):
     except Exception:
         return 0.0
 
-
 def _get_name(x):
     if isinstance(x, dict):
         return x.get("name") or x.get("C02_005") or next(iter(x.values()), None)
     if isinstance(x, (str, int, float)):
         return str(x)
     return str(x)
-
 
 def _label_stations(prefix, stations):
     stations = [s for s in (stations or []) if s is not None]
@@ -112,7 +106,6 @@ def _label_stations(prefix, stations):
     if len(stations) == 1:
         return {f"{prefix}_station": _get_name(stations[0])}
     return {f"{prefix}_station_{i}": _get_name(s) for i, s in enumerate(stations, 1)}
-
 
 def build_data_infos(
     origin_port,
@@ -168,7 +161,6 @@ def build_data_infos(
     )
     return data
 
-
 def build_result_segment(
     idx: int,
     merged_count: int,
@@ -212,7 +204,6 @@ def build_result_segment(
         **fixed_fields,
         **station_fields,  
     }
-
 
 def linestring_to_geojson_feature(geom, props=None, precision=6):
     """geom: shapely.geometry.LineString (EPSG:4326)
@@ -473,7 +464,6 @@ def calc_wait_minutes(arrival_time: str, departure_time: str) -> float:
     delta = departure_time_dt - arrival_time_dt
     return delta.total_seconds() / 60.0  # minutes
 
-
 def to_nullable_str(v: Any) -> Optional[str]:
     """Return None if value is NaN/empty, else str(v)."""
     if pd.isna(v):
@@ -482,7 +472,6 @@ def to_nullable_str(v: Any) -> Optional[str]:
     if s.strip() == "":
         return None
     return s
-
 
 def to_nullable_float(v: Any) -> Optional[float]:
     """Return None if value is NaN, else float(v)."""
@@ -493,7 +482,6 @@ def to_nullable_float(v: Any) -> Optional[float]:
     except (TypeError, ValueError):
         return None
 
-
 def to_hhmm_or_none(v: Any) -> Optional[str]:
     """Convert datetime-like to 'HH:MM', or None if NaN/invalid."""
     if pd.isna(v):
@@ -503,13 +491,11 @@ def to_hhmm_or_none(v: Any) -> Optional[str]:
     except Exception:
         return None
 
-
 def to_hhmm(t):
     t = str(t)
     if " " in t:  # "1900-01-02 11:04:52"
         return t.split(" ")[1][:5]
     return t[:5]
-
 
 def process_train_data(
     schedules_data: pd.DataFrame, stations_data: gpd.GeoDataFrame
@@ -580,7 +566,6 @@ def process_train_data(
         )
 
     return routes
-
 
 def process_ship_data(
     ports_data: gpd.GeoDataFrame,
@@ -657,3 +642,22 @@ def reset_global_states():
         "arrival_time_previous_route": 0,
         "warning_message": ""
     }
+
+def save_summary_to_geojson(summary: dict, output_file: str = "multimodal_routes.geojson"):
+    """
+    Save merged GeoJSON from summary results to a file.
+    """
+    merged_geojson = {
+        "type": "FeatureCollection",
+        "features": []
+    }
+
+    for result in summary.get("results", []):
+        geojson = result.get("geojson", {})
+        features = geojson.get("features", [])
+        merged_geojson["features"].extend(features)
+
+    with open(output_file, "w", encoding="utf-8") as f:
+        json.dump(merged_geojson, f, ensure_ascii=False, indent=2)
+
+    print(f"GeoJSON saved to {output_file}, total features: {len(merged_geojson['features'])}")
