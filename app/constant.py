@@ -7,7 +7,8 @@ STREET_TYPE = {
     "TRUCK_TRAIN_SHIP_TRAIN": "TRUCK_TRAIN_SHIP_TRAIN",
 }
 
-FOLDER_DATA = "importer_data"
+FOLDER_DATA = "data_file"
+OUTPUT_FOLDER = "output/"
 
 VEHICLES = {
     'truck': 'Truck',
@@ -25,4 +26,3 @@ MESSAGES = {
     "nearest_ports_or_stations_not_found": "起点・終点の近隣の港・駅を結ぶ経路が見つかりません", 
 }
 
-OUTPUT_FOLDER = "output/"

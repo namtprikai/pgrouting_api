@@ -8,7 +8,7 @@ import numpy as np
 import pandas as pd
 import geopandas as gpd
 from typing import Any, Dict, List, Optional
-import globals
+from . import globals
 
 RouteDict = Dict[str, Any]
 

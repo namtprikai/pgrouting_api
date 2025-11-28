@@ -13,9 +13,9 @@ import numpy as np
 import json
 from shapely import wkt
 import math
-from constant import *
-import globals
-from helper import (
+from .constant import *
+from . import globals
+from .helper import (
     build_data_infos,
     build_result_segment,
     extract_linestring,
@@ -26,7 +26,7 @@ from helper import (
     calc_wait_minutes,
     reset_global_states, parse_time
 )
-from decoratorr import timeit
+from .decoratorr import timeit
 
 import time
 
@@ -563,45 +563,10 @@ class RouteOptimizer:
 
         print("NEAREST ORIGIN STATIONS: ", origin_stations, "\n")
         print("NEAREST DEST STATIONS: ", dest_stations, "\n")
-        if origin_stations.empty or dest_stations.empty:
-            return {
-                "origin_station": default_origin_station,
-                "dest_station": default_dest_station,
-            }
-        
-        best_origin_row = None
-        best_dest_row = None
-        best_time = None
-
-        for _, o_row in origin_stations.iterrows():
-            origin_name = o_row["Station_Name"]
-
-            for _, d_row in dest_stations.iterrows():
-                dest_name = d_row["Station_Name"]
-                available, data = self._is_direct_train_route_available(origin_station_name=origin_name, dest_station_name=dest_name)
-
-                if not available or not data:
-                    continue
-                
-                route_time = data.get("time")
-                if route_time is None:
-                    continue
-
-                if best_time is None or route_time < best_time:
-                    best_time = route_time
-                    best_origin_row = o_row
-                    best_dest_row = d_row
-        
-        if best_origin_row is not None and best_dest_row is not None:
-            chosen_origin = best_origin_row
-            chosen_dest = best_dest_row
-        else:
-            chosen_origin = default_origin_station
-            chosen_dest = default_dest_station
 
         return {
-            "origin_station": chosen_origin,
-            "dest_station": chosen_dest,
+            "origin_station": default_origin_station,
+            "dest_station": default_dest_station,
         }
 
     async def _nearest_station(self, lon: float, lat: float):
@@ -750,12 +715,12 @@ class RouteOptimizer:
                                 truck_routes, train_routes, nearest_stations, weight_tons
                             )
                             routes.extend(combined_routes)
+                        else:
+                            return {'isError': True, 'data': [], 'message': MESSAGES['train_route_not_found']}
                     else:
-                        return {'isError': True, 'data': [], 'message': MESSAGES['train_route_not_found']}
+                        return {'isError': True, 'data': [], 'message': MESSAGES['truck_route_not_found']}
                 else:
-                    return {'isError': True, 'data': [], 'message': MESSAGES['truck_route_not_found']}
-            else:
-                return {'isError': True, 'data': [], 'message': MESSAGES['nearest_ports_or_stations_not_found']}
+                    return {'isError': True, 'data': [], 'message': MESSAGES['nearest_ports_or_stations_not_found']}
 
         # Route 4: Truck + Ship + Train
         if mode == "truck_ship_train":
@@ -2535,10 +2500,10 @@ class RouteOptimizer:
                 "geometry": origin_to_station["geometry"],
             }
             features.append(f1)
-            globals.GLOBAL_STATE['total_time_minutes'] += f1['total_time_minutes'] + f1['total_wait_time_before_departure_minutes']
-            globals.GLOBAL_STATE['total_move_time_minutes'] += f1['total_time_minutes']
-            globals.GLOBAL_STATE['total_distance_km'] += f1['total_distance_km']
-            globals.GLOBAL_STATE['total_co2_emissions_grams'] += f1['total_co2_emissions_grams']
+            globals.GLOBAL_STATE['total_time_minutes'] = f1['total_time_minutes'] + f1['total_wait_time_before_departure_minutes']
+            globals.GLOBAL_STATE['total_move_time_minutes'] = f1['total_time_minutes']
+            globals.GLOBAL_STATE['total_distance_km'] = f1['total_distance_km']
+            globals.GLOBAL_STATE['total_co2_emissions_grams'] = f1['total_co2_emissions_grams']
 
             if transfer_stations:
                 f2 = {
@@ -3105,10 +3070,10 @@ class RouteOptimizer:
                 "geometry": origin_to_port["geometry"],
             }
             features.append(f1)
-            globals.GLOBAL_STATE['total_time_minutes'] += f1['total_time_minutes'] + f1['total_wait_time_before_departure_minutes']
-            globals.GLOBAL_STATE['total_move_time_minutes'] += f1['total_time_minutes']
-            globals.GLOBAL_STATE['total_distance_km'] += f1['total_distance_km']
-            globals.GLOBAL_STATE['total_co2_emissions_grams'] += f1['total_co2_emissions_grams']
+            globals.GLOBAL_STATE['total_time_minutes'] = f1['total_time_minutes'] + f1['total_wait_time_before_departure_minutes']
+            globals.GLOBAL_STATE['total_move_time_minutes'] = f1['total_time_minutes']
+            globals.GLOBAL_STATE['total_distance_km'] = f1['total_distance_km']
+            globals.GLOBAL_STATE['total_co2_emissions_grams'] = f1['total_co2_emissions_grams']
             
 
             if transfer_ports:

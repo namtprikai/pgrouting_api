@@ -4,13 +4,14 @@ import asyncpg
 from fastapi import FastAPI
 from pydantic import BaseModel, confloat
 from pydantic_settings import BaseSettings
-from route_optimizer import RouteOptimizer
-from helper import process_ship_data, process_train_data
-from constant import *
-from helper import create_response, save_summary_to_geojson
+from .route_optimizer import RouteOptimizer
+from .helper import process_ship_data, process_train_data, create_response, save_summary_to_geojson
+from .constant import *
 import threading
 from starlette.middleware.gzip import GZipMiddleware
+from dotenv import load_dotenv
 
+load_dotenv('../.env')
 import concurrent.futures
 
 
@@ -104,11 +105,11 @@ async def startup_event():
 
 
 # Shutdown event to close DB pool
-@app.on_event("shutdown")
-async def shutdown_event():
-    """Close database connection pool on shutdown"""
-    await db.close_pool()
-    print("Database connection pool closed")
+# @app.on_event("shutdown")
+# async def shutdown_event():
+#     """Close database connection pool on shutdown"""
+#     await db.close_pool()
+#     print("Database connection pool closed")
 
 
 # API endpoint for getting available routes
