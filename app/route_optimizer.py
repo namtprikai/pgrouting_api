@@ -4372,7 +4372,7 @@ class RouteOptimizer:
             ST_X(ST_StartPoint(geom)) AS x1, ST_Y(ST_StartPoint(geom)) AS y1,
             ST_X(ST_EndPoint(geom)) AS x2, ST_Y(ST_EndPoint(geom)) AS y2,
             length_m, highway, geom
-        FROM jpn_ways
+        FROM jpn_ways_light
         WHERE NOT blocked
         AND geom && ST_Expand(
             ST_MakeEnvelope($1::float, $2::float, $3::float, $4::float, 4326),
@@ -4399,7 +4399,7 @@ class RouteOptimizer:
                 ST_X(ST_StartPoint(geom)) AS x1, ST_Y(ST_StartPoint(geom)) AS y1,
                 ST_X(ST_EndPoint(geom)) AS x2, ST_Y(ST_EndPoint(geom)) AS y2,
                 length_m, highway, geom
-            FROM jpn_ways
+            FROM jpn_ways_light
             WHERE NOT blocked
             """
             route_edges = await self._db_query_all(
@@ -4426,7 +4426,7 @@ class RouteOptimizer:
                 highway,
                 geom,
                 maxspeed_forward
-            FROM jpn_ways
+            FROM jpn_ways_light
             WHERE gid = ANY($1::bigint[])
                 AND NOT blocked
             ORDER BY array_position($1::bigint[], gid);
@@ -4543,7 +4543,7 @@ class RouteOptimizer:
 
             print("Debug: Nodes are connected, getting route from database")
 
-            # Query route, loi o day
+            # Query route
             route_result = await self._route_truck_mm(
                 start_point.x, start_point.y, end_point.x, end_point.y, toll_per_km
             )
