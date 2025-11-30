@@ -395,12 +395,29 @@ def create_response(origin_name, origin_lat, origin_lon, destination_name, desti
 def calc_total_wait_time_before_departure_minutes(departure_time, arrival_time):
     return departure_time - arrival_time
 
-def parse_time(time_str):
-    try:
-        times = datetime.strptime(time_str.strip(), "%H:%M:%S")
-        return datetime.strptime(times.strftime("%H:%M"), "%H:%M")
-    except ValueError:
-        return datetime.strptime(time_str, "%H:%M")
+def parse_time(time_val):
+    if isinstance(time_val, (datetime, pd.Timestamp)):
+        return time_val
+
+    s = str(time_val).strip()
+    if " " in s:
+        s = s.split(" ", 1)[1]
+
+    add_day = False
+    if s.startswith("24:"):
+        s = "00:" + s.split(":", 1)[1]
+        add_day = True
+
+    for fmt in ("%H:%M:%S", "%H:%M"):
+        try:
+            dt = datetime.strptime(s, fmt)
+            if add_day:
+                dt += timedelta(days=1)
+            return dt
+        except ValueError:
+            continue
+
+    raise ValueError(f"Unsupported time format: {time_val}")
 
 def find_ship_by_departure_time(routes: pd.DataFrame, arrival_time_buffer_wait_time):
     try:
