@@ -33,7 +33,7 @@ class Settings(BaseSettings):
     EF_SHIP_G_PER_TKM: float
     PAYLOAD_TON: float
     
-    PORT: int
+    APP_PORT: int
     
     class Config:
         env_file = ".env"
@@ -401,7 +401,7 @@ if __name__ == "__main__":
     uvicorn.run(
         "app:app", 
         host="0.0.0.0", 
-        port=settings.PORT, 
+        port=settings.APP_PORT,
         reload=True,
         workers=1,
         loop="asyncio"

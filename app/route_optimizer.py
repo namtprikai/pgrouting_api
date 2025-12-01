@@ -477,48 +477,10 @@ class RouteOptimizer:
 
         print("NEAREST ORIGIN PORTS: ", origin_ports, "\n")
         print("NEAREST DEST PORTS: ", dest_ports, "\n")
-        
-        if origin_ports.empty or dest_ports.empty:
-            return {
-                "origin_port": default_origin_port,
-                "dest_port": default_dest_port,
-            }
-        
-        best_origin_row = None
-        best_dest_row = None
-        best_time = None
-
-        for _, o_row in origin_ports.iterrows():
-            origin_name = o_row["C02_005"]
-
-            for _, d_row in dest_ports.iterrows():
-                dest_name = d_row["C02_005"]
-                available, data = self._is_direct_ship_route_available(origin_port=origin_name, dest_port=dest_name)
-
-                if not available or not data:
-                    continue
-                
-                route_time = data.get("time")
-                print("TIMEZ ", route_time)
-                if route_time is None:
-                    continue
-
-                if best_time is None or route_time < best_time:
-                    best_time = route_time
-                    best_origin_row = o_row
-                    best_dest_row = d_row
-                    
-
-        if best_origin_row is not None and best_dest_row is not None:
-            chosen_origin = best_origin_row
-            chosen_dest = best_dest_row
-        else:
-            chosen_origin = default_origin_port
-            chosen_dest = default_dest_port
 
         return {
-            "origin_port": chosen_origin,
-            "dest_port": chosen_dest,
+            "origin_port": default_origin_port,
+            "dest_port": default_dest_port,
         }
     
     def _find_nearest_stations_by_radius(self, origin_point: Point, dest_point: Point, radius: int) -> Dict:
