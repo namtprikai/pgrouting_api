@@ -520,15 +520,30 @@ class RouteOptimizer:
         ].sort_values("distance")
 
         # Check each pair of origin-dest ports to see if they has direct train route, if not, return default (first element of sorted list)
-        default_origin_station = origin_stations.iloc[0] if not origin_stations.empty else None
-        default_dest_station = dest_stations.iloc[0] if not dest_stations.empty else None
+        origin_station_selected = origin_stations.iloc[0] if not origin_stations.empty else None
+        dest_station_selected = dest_stations.iloc[0] if not dest_stations.empty else None
 
-        print("NEAREST ORIGIN STATIONS: ", origin_stations, "\n")
-        print("NEAREST DEST STATIONS: ", dest_stations, "\n")
+        # 1 Join with train_schedule
+        departure_train_schedules = origin_stations.merge(
+            self.train_time,
+            left_on="Station_Code",
+            right_on="Departure_Station_Code",
+            how="inner"
+        )
+
+        arrival_train_schedules = dest_stations.merge(
+            self.train_time,
+            left_on="Station_Code",
+            right_on="Arrival_Station_Code",
+            how="inner"
+        )
+
+        print("NEAREST ORIGIN STATIONS: ", departure_train_schedules, "\n")
+        print("NEAREST DEST STATIONS: ", arrival_train_schedules, "\n")
 
         return {
-            "origin_station": default_origin_station,
-            "dest_station": default_dest_station,
+            "origin_station": origin_station_selected,
+            "dest_station": dest_station_selected,
         }
 
     async def _nearest_station(self, lon: float, lat: float):
